@@ -2482,6 +2482,69 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Layer verbs the keyboard drives")
+do {
+    var doc = ThumbDocument()
+    let a = ThumbLayer(kind: .text(TextSpec(text: "A")))
+    let b = ThumbLayer(kind: .text(TextSpec(text: "B")))
+    let c = ThumbLayer(kind: .text(TextSpec(text: "C")))
+    doc.layers = [a, b, c]
+
+    // Duplicate lands directly above its original and is a distinct layer,
+    // offset so you can see there are two of them.
+    let copyID = doc.duplicate(layerID: b.id)
+    check("duplicate returns a new id", copyID != nil && copyID != b.id)
+    check("duplicate inserts directly above the original",
+          doc.layers.count == 4 && doc.layers[1].id == b.id && doc.layers[2].id == copyID)
+    if case .text(let spec)? = doc.layers.first(where: { $0.id == copyID })?.kind {
+        check("duplicate copies the content", spec.text == "B")
+    } else {
+        check("duplicate copies the content", false)
+    }
+    check("duplicate offsets the copy so it is visible",
+          (doc.layers[2].x - b.x) > 0.001 && (doc.layers[2].y - b.y) > 0.001)
+
+    // A locked layer's copy is unlocked — otherwise duplicating a locked
+    // layer gives you something you cannot move.
+    var locked = ThumbDocument()
+    var lockedLayer = ThumbLayer(kind: .shape(ShapeSpec()))
+    lockedLayer.isLocked = true
+    locked.layers = [lockedLayer]
+    let unlockedCopy = locked.duplicate(layerID: lockedLayer.id)
+    check("a duplicate of a locked layer is not itself locked",
+          locked.layers.first(where: { $0.id == unlockedCopy })?.isLocked == false)
+
+    var emptyDoc = ThumbDocument()
+    check("duplicating an unknown layer is a no-op",
+          emptyDoc.duplicate(layerID: UUID()) == nil)
+
+    // Delete hands back what to select next, so the inspector never empties
+    // while there is still something on the canvas.
+    var deleting = ThumbDocument()
+    deleting.layers = [a, b, c]
+    let afterMiddle = deleting.remove(layerID: b.id)
+    check("delete removes exactly one layer", deleting.layers.count == 2)
+    check("delete selects the layer that took its place", afterMiddle == c.id)
+    let afterTop = deleting.remove(layerID: c.id)
+    check("deleting the top layer falls back to the new top", afterTop == a.id)
+    check("deleting the last layer selects nothing",
+          deleting.remove(layerID: a.id) == nil && deleting.layers.isEmpty)
+    check("deleting an unknown layer is a no-op",
+          emptyDoc.remove(layerID: UUID()) == nil)
+
+    // Tab cycles the stack and wraps at both ends.
+    var tabbing = ThumbDocument()
+    tabbing.layers = [a, b, c]
+    check("tab starts at the top layer when nothing is selected",
+          tabbing.neighbour(of: nil, offset: 1) == c.id)
+    check("tab walks toward the front", tabbing.neighbour(of: a.id, offset: 1) == b.id)
+    check("shift-tab walks toward the back", tabbing.neighbour(of: b.id, offset: -1) == a.id)
+    check("tab wraps past the front", tabbing.neighbour(of: c.id, offset: 1) == a.id)
+    check("shift-tab wraps past the back", tabbing.neighbour(of: a.id, offset: -1) == c.id)
+    check("tab on an empty document selects nothing",
+          ThumbDocument().neighbour(of: nil, offset: 1) == nil)
+}
+
     check("cut fields decode with safe defaults from old documents",
           {
               let json = #"{"path":"/x.png"}"#.data(using: .utf8)!
