@@ -25,7 +25,9 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     @Published var thumbStudioError: String?
     weak var timelineUndoManager: UndoManager?
 
-    let fileURL: URL
+    /// The file is this design's identity, and renaming moves it — so this
+    /// is a var, and a rename keeps the same store and the same undo stack.
+    private(set) var fileURL: URL
     private var lastUndoAction: String?
     private var lastUndoRegistration = Date.distantPast
     /// The file's timestamp as of our own last read or write. Anything newer
@@ -87,6 +89,47 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         store.thumbDoc = document
         store.persist()
         return store
+    }
+
+    /// Renames the design on disk. Keeps this store and its undo history —
+    /// only the file moves. Returns false when the name was unusable.
+    @discardableResult
+    func rename(to newName: String) -> Bool {
+        let cleaned = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+        let stem = cleaned.isEmpty ? "Untitled" : String(cleaned.prefix(60))
+        guard stem != fileURL.deletingPathExtension().lastPathComponent else { return true }
+        var target = Paths.thumbLabRoot.appendingPathComponent("\(stem).json")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            target = Paths.thumbLabRoot.appendingPathComponent("\(stem) \(suffix).json")
+            suffix += 1
+        }
+        guard (try? FileManager.default.moveItem(at: fileURL, to: target)) != nil else {
+            thumbStudioError = "Couldn't rename this design."
+            return false
+        }
+        fileURL = target
+        objectWillChange.send()
+        return true
+    }
+
+    /// A copy of a design on disk, named the way Finder names copies. Returns
+    /// the new file's URL so the gallery can select it.
+    @discardableResult
+    static func duplicate(_ design: Design) -> URL? {
+        var name = design.name + " copy"
+        var target = Paths.thumbLabRoot.appendingPathComponent("\(name).json")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            name = design.name + " copy \(suffix)"
+            target = Paths.thumbLabRoot.appendingPathComponent("\(name).json")
+            suffix += 1
+        }
+        guard (try? FileManager.default.copyItem(at: design.url, to: target)) != nil else {
+            return nil
+        }
+        return target
     }
 
     func applyThumbDoc(_ document: ThumbDocument, action: String?) {

@@ -1,217 +1,268 @@
 import SwiftUI
 import AppKit
 
-/// The Thumb Lab, Canva-shaped: a design home — hero, size presets,
-/// template cards, a grid of your recent designs — and a full-bleed editor
-/// you step into and back out of. No project, no video, no floating window.
+/// The Thumbnail Studio home: a gallery of designs, the sizes you can start
+/// from, and the templates. Selecting a design opens the editor in place.
+///
+/// Deliberately not a "hero" screen. A tool you open twenty times a day should
+/// get out of the way — the top bar states where you are, the body is your
+/// work, and the status line carries the numbers.
 struct ThumbLabView: View {
     /// nil in the standalone app, where there is nothing to go back to.
     var onClose: (() -> Void)?
 
     @State private var designs: [StandaloneThumbStore.Design] = []
     @State private var store: StandaloneThumbStore?
-    @State private var namingPreset: Int?
-    @State private var draftName = ""
+    @State private var selectedID: String?
+    @State private var search = ""
+    @State private var sort = Sort.recent
+    @State private var pendingDelete: StandaloneThumbStore.Design?
+    @FocusState private var searchFocused: Bool
+    @FocusState private var gridFocused: Bool
+
+    private enum Sort: String, CaseIterable {
+        case recent = "Recently edited"
+        case name = "Name"
+        case size = "Canvas size"
+    }
 
     var body: some View {
         Group {
             if let store {
-                editor(store)
+                ThumbEditorView(store: store, onBack: closeEditor)
             } else {
-                home
+                gallery
             }
         }
-        .background(Theme.background)
-        .onAppear { designs = StandaloneThumbStore.designs() }
+        .studioWindowBackground()
+        .onAppear { reload() }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)) { _ in
             store?.reloadIfChangedExternally()
-            designs = StandaloneThumbStore.designs()
+            reload()
         }
-        .alert("Name your design", isPresented: Binding(
-            get: { namingPreset != nil },
-            set: { if !$0 { namingPreset = nil } }
-        )) {
-            TextField("Name", text: $draftName)
-            Button("Create") { createDesign() }
-            Button("Cancel", role: .cancel) { draftName = "" }
+        .alert("Delete this design?", isPresented: Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        ), presenting: pendingDelete) { design in
+            Button("Delete", role: .destructive) { delete(design) }
+            Button("Cancel", role: .cancel) {}
+        } message: { design in
+            Text("“\(design.name)” will be moved to the Trash. This cannot be undone from inside the app.")
         }
     }
 
-    // MARK: - The editor, full bleed with a way back
+    // MARK: - Gallery
 
-    private func editor(_ store: StandaloneThumbStore) -> some View {
+    private var gallery: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Button {
-                    self.store = nil
-                    designs = StandaloneThumbStore.designs()
-                } label: {
-                    Label("Designs", systemImage: "chevron.left")
-                        .font(.callout)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
-                Text(store.fileURL.deletingPathExtension().lastPathComponent)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Text("\(store.thumbDoc.width)×\(store.thumbDoc.height)")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Theme.textFaint)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Theme.surface.opacity(0.6))
-
-            ThumbnailStudioPane<StandaloneThumbStore>(store: store)
-                .padding(12)
-        }
-    }
-
-    // MARK: - Home
-
-    private var home: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                hero
-                sizeRow
-                templateRow
-                gallerySection
-            }
-            .padding(24)
-        }
-    }
-
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("What are we designing?")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Thumbnails, banners, end cards — no video required. Everything here lives outside your projects.")
-                        .font(.callout)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer()
-                if let onClose {
-                    Button { onClose() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Theme.textFaint)
+            topBar
+            StudioDivider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: Studio.Space.xl) {
+                    if search.isEmpty {
+                        startStrip
+                        templateStrip
+                        StudioDivider()
                     }
-                    .buttonStyle(.plain)
-                    .help("Back to projects")
+                    designGrid
+                }
+                .padding(Studio.Space.xl)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .focusable()
+            .focused($gridFocused)
+            .onKeyPress(.delete) { deleteSelected() }
+            .onKeyPress(.deleteForward) { deleteSelected() }
+            .onKeyPress(.return) { openSelected() }
+            .onKeyPress(.escape) { selectedID = nil; return .handled }
+            .onKeyPress(.leftArrow) { moveSelection(-1) }
+            .onKeyPress(.rightArrow) { moveSelection(1) }
+            StudioStatusBar {
+                Text(countLabel)
+                Text("·")
+                Text(Paths.thumbLabRoot.path)
+                    .truncationMode(.middle)
+                    .lineLimit(1)
+                Spacer()
+                StudioIconButton("folder", help: "Reveal the designs folder", size: .small) {
+                    NSWorkspace.shared.open(Paths.thumbLabRoot)
                 }
             }
         }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(colors: [Theme.accent.opacity(0.22),
-                                    Color(red: 0.42, green: 0.36, blue: 1.0).opacity(0.10),
-                                    Theme.surface],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    /// Canva's size chooser: one card per canvas, drawn at its own aspect.
-    private var sizeRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Start blank")
-            HStack(spacing: 12) {
-                ForEach(Array(ThumbDocument.canvasPresets.enumerated()), id: \.offset) { index, preset in
-                    Button {
-                        namingPreset = index
-                    } label: {
-                        VStack(spacing: 7) {
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(Theme.accent.opacity(0.7),
-                                              style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
-                                .background(RoundedRectangle(cornerRadius: 6)
-                                    .fill(Theme.surfaceRaised.opacity(0.6)))
+    private var countLabel: String {
+        designs.count == 1 ? "1 design" : "\(designs.count) designs"
+    }
+
+    private var topBar: some View {
+        HStack(spacing: Studio.Space.s) {
+            if let onClose {
+                StudioIconButton("chevron.left", help: "Back to projects") { onClose() }
+            }
+            Text("Designs")
+                .font(Studio.Typo.display)
+                .foregroundStyle(Studio.Palette.textPrimary)
+            Spacer()
+            searchField
+            Menu {
+                Picker("Sort", selection: $sort) {
+                    ForEach(Sort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(Studio.Typo.iconMedium)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: Studio.Metric.controlM)
+            .help("Sort designs")
+            Button("New design") { create(preset: ThumbDocument.canvasPresets[0]) }
+                .buttonStyle(.studioPrimary)
+                .keyboardShortcut("n", modifiers: .command)
+        }
+        .padding(.horizontal, Studio.Space.l)
+        .frame(height: Studio.Metric.topBarHeight)
+        .background(Studio.Palette.panel)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: Studio.Space.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(Studio.Typo.iconSmall)
+                .foregroundStyle(Studio.Palette.textTertiary)
+            TextField("Search", text: $search)
+                .textFieldStyle(.plain)
+                .font(Studio.Typo.body)
+                .focused($searchFocused)
+            if !search.isEmpty {
+                StudioIconButton("xmark.circle.fill", help: "Clear", size: .small) { search = "" }
+            }
+        }
+        .padding(.horizontal, Studio.Space.s)
+        .frame(width: 200, height: Studio.Metric.controlS)
+        .background(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous)
+            .fill(Studio.Palette.control))
+        .studioFocusRing(searchFocused, radius: Studio.Radius.field)
+    }
+
+    // MARK: - Start from a size, or a template
+
+    private var startStrip: some View {
+        VStack(alignment: .leading, spacing: Studio.Space.s) {
+            Text("Start a new design")
+                .font(Studio.Typo.section)
+                .foregroundStyle(Studio.Palette.textTertiary)
+            HStack(spacing: Studio.Space.m) {
+                ForEach(ThumbDocument.canvasPresets, id: \.name) { preset in
+                    Button { create(preset: preset) } label: {
+                        VStack(spacing: Studio.Space.s) {
+                            RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous)
+                                .fill(Studio.Palette.windowBackground)
                                 .aspectRatio(CGFloat(preset.width) / CGFloat(preset.height),
                                              contentMode: .fit)
-                                .frame(height: 64)
-                                .overlay {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 15, weight: .medium))
-                                        .foregroundStyle(Theme.accent)
-                                }
-                            Text(preset.name)
-                                .font(.caption2)
-                                .foregroundStyle(Theme.textSecondary)
+                                .frame(height: 72)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Studio.Radius.field,
+                                                     style: .continuous)
+                                        .strokeBorder(Studio.Palette.hairline,
+                                                      lineWidth: Studio.Metric.hairline))
+                                .overlay(Image(systemName: "plus")
+                                    .font(Studio.Typo.iconSmall)
+                                    .foregroundStyle(Studio.Palette.textTertiary))
+                            Text(shortName(preset.name))
+                                .font(Studio.Typo.label)
+                                .foregroundStyle(Studio.Palette.textSecondary)
+                            Text("\(preset.width) × \(preset.height)")
+                                .font(Studio.Typo.numeric)
+                                .foregroundStyle(Studio.Palette.textTertiary)
                         }
-                        .padding(10)
-                        .frame(maxWidth: .infinity)
-                        .background(Theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .contentShape(Rectangle())
+                        .padding(Studio.Space.s)
+                        .frame(width: 132)
+                        .studioSelectable(isSelected: false)
                     }
                     .buttonStyle(.plain)
                 }
+                Spacer(minLength: 0)
             }
         }
     }
 
-    /// The starter templates, rendered live — click one and it's yours.
-    private var templateRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Start from a template")
-            HStack(spacing: 12) {
+    /// "YouTube 1280×720" → "YouTube": the dimensions get their own line, so
+    /// repeating them in the name is noise.
+    private func shortName(_ name: String) -> String {
+        name.split(separator: " ").dropLast().joined(separator: " ")
+    }
+
+    private var templateStrip: some View {
+        VStack(alignment: .leading, spacing: Studio.Space.s) {
+            Text("Start from a template")
+                .font(Studio.Typo.section)
+                .foregroundStyle(Studio.Palette.textTertiary)
+            HStack(spacing: Studio.Space.m) {
                 ForEach(ThumbTemplates.starters(), id: \.name) { template in
-                    Button {
-                        createFromTemplate(template.name, template.document)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
+                    Button { createFromTemplate(template.name, template.document) } label: {
+                        VStack(alignment: .leading, spacing: Studio.Space.s) {
                             DocPreview(document: template.document)
-                                .frame(height: 92)
+                                .frame(height: 72)
                             Text(template.name)
-                                .font(.caption)
-                                .foregroundStyle(Theme.textPrimary)
+                                .font(Studio.Typo.label)
+                                .foregroundStyle(Studio.Palette.textSecondary)
                         }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .contentShape(Rectangle())
+                        .padding(Studio.Space.s)
+                        .frame(width: 132)
+                        .studioSelectable(isSelected: false)
                     }
                     .buttonStyle(.plain)
                 }
+                Spacer(minLength: 0)
             }
         }
     }
 
-    private var gallerySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    // MARK: - The designs
+
+    private var visible: [StandaloneThumbStore.Design] {
+        let filtered = search.isEmpty ? designs : designs.filter {
+            $0.name.localizedCaseInsensitiveContains(search)
+        }
+        switch sort {
+        case .recent: return filtered.sorted { $0.modifiedAt > $1.modifiedAt }
+        case .name: return filtered.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .size: return filtered.sorted { $0.width * $0.height > $1.width * $1.height }
+        }
+    }
+
+    private var designGrid: some View {
+        VStack(alignment: .leading, spacing: Studio.Space.m) {
             HStack {
-                SectionLabel(text: "Your designs")
-                Text("\(designs.count)")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textFaint)
+                Text(search.isEmpty ? "Your designs" : "Results")
+                    .font(Studio.Typo.section)
+                    .foregroundStyle(Studio.Palette.textTertiary)
                 Spacer()
-                Button {
-                    NSWorkspace.shared.open(Paths.thumbLabRoot)
-                } label: {
-                    Image(systemName: "folder")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textFaint)
-                .help("Every design is a file in this folder")
             }
-            if designs.isEmpty {
-                Text("Nothing yet — start blank or grab a template above.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textFaint)
-                    .padding(.vertical, 18)
+            if visible.isEmpty {
+                StudioEmptyState(
+                    symbol: search.isEmpty ? "rectangle.on.rectangle.angled" : "magnifyingglass",
+                    title: search.isEmpty ? "No designs yet" : "Nothing matches “\(search)”",
+                    message: search.isEmpty
+                        ? "Start from a size above, or open a template."
+                        : "Try a different word, or clear the search.",
+                    actionTitle: search.isEmpty ? "New design" : "Clear search") {
+                        if search.isEmpty { create(preset: ThumbDocument.canvasPresets[0]) }
+                        else { search = "" }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Studio.Space.xxl)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 280),
-                                             spacing: 14)],
-                          spacing: 14) {
-                    ForEach(designs) { design in
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 232, maximum: 300),
+                                             spacing: Studio.Space.l)],
+                          spacing: Studio.Space.l) {
+                    ForEach(visible) { design in
                         designCard(design)
                     }
                 }
@@ -220,51 +271,84 @@ struct ThumbLabView: View {
     }
 
     private func designCard(_ design: StandaloneThumbStore.Design) -> some View {
-        Button {
-            store = StandaloneThumbStore(fileURL: design.url)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                LabPreview(url: design.url)
-                    .frame(height: 120)
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(design.name)
-                            .font(.caption)
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Text("\(design.width)×\(design.height) · \(design.modifiedAt.formatted(.relative(presentation: .named)))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Theme.textFaint)
-                            .lineLimit(1)
-                    }
-                    Spacer()
+        VStack(spacing: 0) {
+            LabPreview(url: design.url)
+                .aspectRatio(CGFloat(design.width) / CGFloat(design.height), contentMode: .fit)
+                .frame(maxWidth: .infinity)
+            HStack(spacing: Studio.Space.s) {
+                VStack(alignment: .leading, spacing: Studio.Space.xxs) {
+                    Text(design.name)
+                        .font(Studio.Typo.bodyStrong)
+                        .foregroundStyle(Studio.Palette.textPrimary)
+                        .lineLimit(1)
+                    Text("\(design.width) × \(design.height) · \(design.modifiedAt.formatted(.relative(presentation: .named)))")
+                        .font(Studio.Typo.caption)
+                        .foregroundStyle(Studio.Palette.textTertiary)
+                        .lineLimit(1)
                 }
+                Spacer(minLength: 0)
             }
-            .padding(8)
-            .background(Theme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .contentShape(Rectangle())
+            .padding(Studio.Space.s)
         }
-        .buttonStyle(.plain)
+        .studioSelectable(isSelected: selectedID == design.id)
+        .onTapGesture(count: 2) { open(design) }
+        .onTapGesture { selectedID = design.id; gridFocused = true }
         .contextMenu {
-            Button("Duplicate") { duplicateDesign(design) }
+            Button("Open") { open(design) }
+            Button("Duplicate") { duplicate(design) }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([design.url])
             }
             Divider()
-            Button("Delete", role: .destructive) { deleteDesign(design) }
+            Button("Delete…", role: .destructive) { pendingDelete = design }
         }
+    }
+
+    // MARK: - Keyboard
+
+    private func deleteSelected() -> KeyPress.Result {
+        guard let design = visible.first(where: { $0.id == selectedID }) else { return .ignored }
+        pendingDelete = design
+        return .handled
+    }
+
+    private func openSelected() -> KeyPress.Result {
+        guard let design = visible.first(where: { $0.id == selectedID }) else { return .ignored }
+        open(design)
+        return .handled
+    }
+
+    private func moveSelection(_ offset: Int) -> KeyPress.Result {
+        let list = visible
+        guard !list.isEmpty else { return .ignored }
+        guard let current = list.firstIndex(where: { $0.id == selectedID }) else {
+            selectedID = list.first?.id
+            return .handled
+        }
+        selectedID = list[min(list.count - 1, max(0, current + offset))].id
+        return .handled
     }
 
     // MARK: - Actions
 
-    private func createDesign() {
-        let preset = ThumbDocument.canvasPresets[namingPreset ?? 0]
-        store = StandaloneThumbStore.create(
-            named: draftName, width: preset.width, height: preset.height)
-        draftName = ""
-        namingPreset = nil
-        designs = StandaloneThumbStore.designs()
+    private func reload() { designs = StandaloneThumbStore.designs() }
+
+    private func closeEditor() {
+        store = nil
+        reload()
+    }
+
+    private func open(_ design: StandaloneThumbStore.Design) {
+        store = StandaloneThumbStore(fileURL: design.url)
+    }
+
+    /// No naming dialog. Every tool in this class creates the document first
+    /// and lets you rename it in the editor, because a modal asking for a name
+    /// before you have drawn anything is friction with no payoff.
+    private func create(preset: (name: String, width: Int, height: Int)) {
+        store = StandaloneThumbStore.create(named: "Untitled",
+                                            width: preset.width, height: preset.height)
+        reload()
     }
 
     private func createFromTemplate(_ name: String, _ document: ThumbDocument) {
@@ -272,26 +356,23 @@ struct ThumbLabView: View {
             named: name, width: document.width, height: document.height)
         created.applyThumbDoc(document, action: nil)
         store = created
-        designs = StandaloneThumbStore.designs()
+        reload()
     }
 
-    private func duplicateDesign(_ design: StandaloneThumbStore.Design) {
-        var copy = design.name + " copy"
-        var target = Paths.thumbLabRoot.appendingPathComponent("\(copy).json")
-        var suffix = 2
-        while FileManager.default.fileExists(atPath: target.path) {
-            copy = design.name + " copy \(suffix)"
-            target = Paths.thumbLabRoot.appendingPathComponent("\(copy).json")
-            suffix += 1
-        }
-        try? FileManager.default.copyItem(at: design.url, to: target)
-        designs = StandaloneThumbStore.designs()
+    private func duplicate(_ design: StandaloneThumbStore.Design) {
+        guard let copy = StandaloneThumbStore.duplicate(design) else { return }
+        reload()
+        selectedID = copy.path
     }
 
-    private func deleteDesign(_ design: StandaloneThumbStore.Design) {
-        try? FileManager.default.removeItem(at: design.url)
+    private func delete(_ design: StandaloneThumbStore.Design) {
+        // Trash, not unlink: a design is the user's work, and an undo stack
+        // that ends at the app's own launch is not a safety net.
+        try? FileManager.default.trashItem(at: design.url, resultingItemURL: nil)
         if store?.fileURL == design.url { store = nil }
-        designs = StandaloneThumbStore.designs()
+        if selectedID == design.id { selectedID = nil }
+        pendingDelete = nil
+        reload()
     }
 }
 
@@ -302,16 +383,13 @@ private struct LabPreview: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color.black.opacity(0.4))
+            Studio.Palette.windowBackground
             if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-            } else {
-                ProgressView().controlSize(.mini)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
         .task(id: url) {
             let fileURL = url
             image = await Task.detached(priority: .utility) { () -> NSImage? in
@@ -321,8 +399,7 @@ private struct LabPreview: View {
                 doc.width = max(64, doc.width / 4)
                 doc.height = max(36, doc.height / 4)
                 return ThumbnailRenderer.render(doc) { spec in
-                    let path = spec.useCutout ? (spec.cutoutPath ?? spec.path) : spec.path
-                    return NSImage(contentsOfFile: path)
+                    NSImage(contentsOfFile: spec.effectivePath)
                 }
             }.value
         }
@@ -336,22 +413,21 @@ private struct DocPreview: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color.black.opacity(0.4))
+            Studio.Palette.windowBackground
             if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous))
         .task {
             var doc = document
             image = await Task.detached(priority: .utility) { () -> NSImage? in
                 doc.width = max(64, doc.width / 4)
                 doc.height = max(36, doc.height / 4)
                 return ThumbnailRenderer.render(doc) { spec in
-                    let path = spec.useCutout ? (spec.cutoutPath ?? spec.path) : spec.path
-                    return path.isEmpty ? nil : NSImage(contentsOfFile: path)
+                    spec.effectivePath.isEmpty ? nil : NSImage(contentsOfFile: spec.effectivePath)
                 }
             }.value
         }
