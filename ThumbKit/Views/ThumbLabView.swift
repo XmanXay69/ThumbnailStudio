@@ -23,6 +23,11 @@ struct ThumbLabView: View {
         }
         .background(Theme.background)
         .onAppear { designs = StandaloneThumbStore.designs() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            store?.reloadIfChangedExternally()
+            designs = StandaloneThumbStore.designs()
+        }
         .alert("Name your design", isPresented: Binding(
             get: { namingPreset != nil },
             set: { if !$0 { namingPreset = nil } }

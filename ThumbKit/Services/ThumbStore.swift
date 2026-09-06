@@ -28,6 +28,9 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     let fileURL: URL
     private var lastUndoAction: String?
     private var lastUndoRegistration = Date.distantPast
+    /// The file's timestamp as of our own last read or write. Anything newer
+    /// on disk was written by somebody else.
+    private var knownModified: Date?
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -37,6 +40,32 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         } else {
             thumbDoc = ThumbDocument()
         }
+        knownModified = Self.modified(at: fileURL)
+    }
+
+    private static func modified(at url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    /// Designs live in one folder that both the standalone studio and the VOD
+    /// editor's Thumb Lab can open, and every edit writes through immediately.
+    /// Two apps on the same design would otherwise silently overwrite each
+    /// other, so whoever comes to the front adopts what's on disk first. You
+    /// can only type in one app at a time, which makes this enough.
+    func reloadIfChangedExternally() {
+        guard let onDisk = Self.modified(at: fileURL) else { return }
+        guard let known = knownModified, onDisk > known else {
+            knownModified = onDisk
+            return
+        }
+        guard let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode(ThumbDocument.self, from: data)
+        else { return }
+        knownModified = onDisk
+        guard decoded != thumbDoc else { return }
+        thumbDoc = decoded
+        timelineUndoManager?.removeAllActions()
+        thumbStudioError = "Reloaded — this design was edited in another window."
     }
 
     /// A fresh design file in the lab folder, named and sized up front.
@@ -90,6 +119,7 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? JSONEncoder().encode(thumbDoc).write(to: fileURL, options: .atomic)
+        knownModified = Self.modified(at: fileURL)
     }
 
     func removeBackground(layerID: UUID) {
