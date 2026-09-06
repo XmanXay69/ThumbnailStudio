@@ -5,7 +5,8 @@ import AppKit
 /// template cards, a grid of your recent designs — and a full-bleed editor
 /// you step into and back out of. No project, no video, no floating window.
 struct ThumbLabView: View {
-    var onClose: () -> Void = {}
+    /// nil in the standalone app, where there is nothing to go back to.
+    var onClose: (() -> Void)?
 
     @State private var designs: [StandaloneThumbStore.Design] = []
     @State private var store: StandaloneThumbStore?
@@ -90,13 +91,15 @@ struct ThumbLabView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                Button { onClose() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Theme.textFaint)
+                if let onClose {
+                    Button { onClose() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.textFaint)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Back to projects")
                 }
-                .buttonStyle(.plain)
-                .help("Back to projects")
             }
         }
         .padding(22)

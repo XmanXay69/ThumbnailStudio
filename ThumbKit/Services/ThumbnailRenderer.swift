@@ -39,7 +39,7 @@ enum ThumbnailRenderer {
         // Canvas base: the document's colour, or dark so an empty document
         // previews sensibly.
         if let hex = document.backgroundHex {
-            SocialOverlayRenderer.color(hex: hex).setFill()
+            HexColor.color(hex: hex).setFill()
         } else {
             NSColor(calibratedWhite: 0.08, alpha: 1).setFill()
         }
@@ -142,11 +142,11 @@ enum ThumbnailRenderer {
         // blend mode, so a destinationOver silhouette drawn second paints
         // over the subject instead of behind it.
         if spec.strokeWidth > 0.5, spec.useCutout,
-           let tinted = tintedSilhouette(image, color: SocialOverlayRenderer.color(hex: spec.strokeHex)) {
+           let tinted = tintedSilhouette(image, color: HexColor.color(hex: spec.strokeHex)) {
             if spec.shadowEnabled {
                 cg?.setShadow(offset: CGSize(width: spec.shadowOffset, height: -spec.shadowOffset),
                               blur: spec.shadowBlur,
-                              color: SocialOverlayRenderer.color(hex: spec.shadowHex)
+                              color: HexColor.color(hex: spec.shadowHex)
                                   .withAlphaComponent(0.75).cgColor)
             }
             let grow = spec.strokeWidth
@@ -175,7 +175,7 @@ enum ThumbnailRenderer {
             if spec.shadowEnabled {
                 cg?.setShadow(offset: CGSize(width: spec.shadowOffset, height: -spec.shadowOffset),
                               blur: spec.shadowBlur,
-                              color: SocialOverlayRenderer.color(hex: spec.shadowHex)
+                              color: HexColor.color(hex: spec.shadowHex)
                                   .withAlphaComponent(0.75).cgColor)
             }
             let cut = cutPath(edge: spec.cutEdge, amount: spec.cutAmount,
@@ -183,7 +183,7 @@ enum ThumbnailRenderer {
             if maskPath != nil || cut != nil {
                 // Shadow must come from the silhouette, not the clip.
                 if spec.shadowEnabled {
-                    SocialOverlayRenderer.color(hex: "000000").withAlphaComponent(0.011).setFill()
+                    HexColor.color(hex: "000000").withAlphaComponent(0.011).setFill()
                     (maskPath ?? cut)?.fill()
                     cg?.setShadow(offset: .zero, blur: 0, color: nil)
                 }
@@ -193,7 +193,7 @@ enum ThumbnailRenderer {
                 image.draw(in: rect, from: sourceRect, operation: .sourceOver, fraction: 1)
                 cg?.restoreGState()
                 if spec.borderWidth > 0.1, let edgePath = maskPath ?? cut {
-                    SocialOverlayRenderer.color(hex: spec.borderHex).setStroke()
+                    HexColor.color(hex: spec.borderHex).setStroke()
                     edgePath.lineWidth = spec.borderWidth
                     edgePath.stroke()
                 }
@@ -201,7 +201,7 @@ enum ThumbnailRenderer {
                 image.draw(in: rect, from: sourceRect, operation: .sourceOver, fraction: 1)
                 cg?.setShadow(offset: .zero, blur: 0, color: nil)
                 if spec.borderWidth > 0.1 {
-                    SocialOverlayRenderer.color(hex: spec.borderHex).setStroke()
+                    HexColor.color(hex: spec.borderHex).setStroke()
                     let borderPath = NSBezierPath(rect: rect)
                     borderPath.lineWidth = spec.borderWidth
                     borderPath.stroke()
@@ -248,11 +248,11 @@ enum ThumbnailRenderer {
         ]
         if strokePass {
             let scaled = spec.strokeWidth * canvasHeight / 720
-            attributes[.strokeColor] = SocialOverlayRenderer.color(hex: spec.strokeHex)
+            attributes[.strokeColor] = HexColor.color(hex: spec.strokeHex)
             attributes[.strokeWidth] = scaled / max(1, fontSize) * 100
-            attributes[.foregroundColor] = SocialOverlayRenderer.color(hex: spec.strokeHex)
+            attributes[.foregroundColor] = HexColor.color(hex: spec.strokeHex)
         } else {
-            attributes[.foregroundColor] = SocialOverlayRenderer.color(hex: spec.fillHex)
+            attributes[.foregroundColor] = HexColor.color(hex: spec.fillHex)
         }
         return attributes
     }
@@ -277,13 +277,13 @@ enum ThumbnailRenderer {
                              y: rect.minY - pad,
                              width: measured.width + pad * 2,
                              height: rect.height + pad * 2)
-            SocialOverlayRenderer.color(hex: spec.boxHex).setFill()
+            HexColor.color(hex: spec.boxHex).setFill()
             NSBezierPath(roundedRect: box, xRadius: spec.boxCorner, yRadius: spec.boxCorner).fill()
         }
         if spec.shadowEnabled {
             cg?.setShadow(offset: CGSize(width: spec.shadowOffset, height: -spec.shadowOffset),
                           blur: spec.shadowBlur,
-                          color: SocialOverlayRenderer.color(hex: spec.shadowHex)
+                          color: HexColor.color(hex: spec.shadowHex)
                               .withAlphaComponent(0.8).cgColor)
         }
         // Stroke pass first, then fill — a single stroked pass eats the fill.
@@ -310,8 +310,8 @@ enum ThumbnailRenderer {
                 cg?.saveGState()
                 cg?.clip(to: rect, mask: mask)
                 let gradient = NSGradient(
-                    starting: SocialOverlayRenderer.color(hex: gradientHex),
-                    ending: SocialOverlayRenderer.color(hex: spec.fillHex))
+                    starting: HexColor.color(hex: gradientHex),
+                    ending: HexColor.color(hex: spec.fillHex))
                 gradient?.draw(in: rect, angle: 90)
                 cg?.restoreGState()
             }
@@ -442,23 +442,23 @@ enum ThumbnailRenderer {
         if cut != nil { cg?.saveGState(); cut?.addClip() }
         defer { if cut != nil { cg?.restoreGState() } }
         if spec.shape == "line" {
-            SocialOverlayRenderer.color(hex: spec.strokeHex).setStroke()
+            HexColor.color(hex: spec.strokeHex).setStroke()
             path.stroke()
             return
         }
         if let fillHex = spec.fillHex {
             if let gradientHex = spec.fillGradientHex,
                let gradient = NSGradient(
-                   starting: SocialOverlayRenderer.color(hex: fillHex),
-                   ending: SocialOverlayRenderer.color(hex: gradientHex)) {
+                   starting: HexColor.color(hex: fillHex),
+                   ending: HexColor.color(hex: gradientHex)) {
                 gradient.draw(in: path, angle: CGFloat(spec.gradientAngleDegrees))
             } else {
-                SocialOverlayRenderer.color(hex: fillHex).setFill()
+                HexColor.color(hex: fillHex).setFill()
                 path.fill()
             }
         }
         if spec.strokeWidth > 0.1 {
-            SocialOverlayRenderer.color(hex: spec.strokeHex).setStroke()
+            HexColor.color(hex: spec.strokeHex).setStroke()
             path.lineWidth = spec.strokeWidth
             path.stroke()
         }

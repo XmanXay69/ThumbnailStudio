@@ -63,7 +63,9 @@ struct ProjectView: View {
                     case .editor: ClipEditorPane(session: session, player: player)
                     case .longform: LongFormPane(session: session, player: player,
                                                  onOpenEditor: { mode = .editor })
-                    case .thumb: ThumbnailStudioPane(store: session, session: session, player: player)
+                    case .thumb: ThumbnailStudioPane(
+                        store: session,
+                        frameSource: ProjectFrameSource(session: session, player: player))
                     case .publish: PublishPane(session: session)
                     }
                 }

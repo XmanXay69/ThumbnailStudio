@@ -32,7 +32,7 @@ BIN=$(mktemp -d)/verify
 # SwiftUI dependency. ProjectSession/ProjectStore are excluded because they are
 # @MainActor observable objects tied to the app.
 swiftc -O -o "$BIN" \
-  VODEditor/Core/Paths.swift \
+  ThumbKit/Core/Paths.swift \
   VODEditor/Core/Shell.swift \
   VODEditor/Core/ToolLocator.swift \
   VODEditor/Models/Transcript.swift \
@@ -61,8 +61,11 @@ swiftc -O -o "$BIN" \
   VODEditor/Services/AutoClipService.swift \
   VODEditor/Models/PlatformPreset.swift \
   VODEditor/Services/SocialOverlayRenderer.swift \
-  VODEditor/Models/ThumbDocument.swift \
-  VODEditor/Services/ThumbnailRenderer.swift \
+  ThumbKit/Models/ThumbDocument.swift \
+  ThumbKit/Models/NormalizedRect.swift \
+  ThumbKit/Core/HexColor.swift \
+  ThumbKit/Core/EditingPrimitives.swift \
+  ThumbKit/Services/ThumbnailRenderer.swift \
   VODEditor/Services/PunchInService.swift \
   VODEditor/Services/ReframeService.swift \
   VODEditor/Services/ReframeSampler.swift \

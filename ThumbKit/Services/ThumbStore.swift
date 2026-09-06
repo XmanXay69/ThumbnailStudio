@@ -15,8 +15,6 @@ protocol ThumbStore: ObservableObject {
     func removeBackground(layerID: UUID)
 }
 
-extension ProjectSession: ThumbStore {}
-
 /// A design in the Thumb Lab: one JSON file, no project, no video. The lab
 /// folder is the gallery — every design is its own document with the same
 /// undo behaviour the project studio has.

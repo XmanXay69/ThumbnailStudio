@@ -345,27 +345,6 @@ struct TrackControls: Codable, Equatable {
     }
 }
 
-/// Undo grouping: the same named action landing within a short window
-/// extends the previous step instead of adding one — dragging a slider is
-/// one undo, not two hundred. Pure so the policy is testable.
-enum UndoCoalescing {
-    static func shouldCoalesce(action: String?, lastAction: String?,
-                               lastAt: Date, now: Date) -> Bool {
-        guard let action, action == lastAction else { return false }
-        return now.timeIntervalSince(lastAt) < 0.8
-    }
-}
-
-/// Snapping: the nearest target within reach, or nothing. Pure so the feel
-/// is testable.
-enum TimelineSnap {
-    static func snapped(_ value: Double, to targets: [Double], threshold: Double) -> Double? {
-        guard let nearest = targets.min(by: { abs($0 - value) < abs($1 - value) }),
-              abs(nearest - value) <= threshold else { return nil }
-        return nearest
-    }
-}
-
 /// A video laid on top of the cut — green-screen memes, reaction cams,
 /// anything from the media browser. Positioned by a normalized rect, gated by
 /// a timeline window, and chroma-keyed on export.

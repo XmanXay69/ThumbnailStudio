@@ -8,9 +8,10 @@ import UniformTypeIdentifiers
 /// written to disk, so preview and file cannot disagree.
 struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @ObservedObject var store: Store
-    /// Present only inside a project — gates the video frame grabs.
-    var session: ProjectSession?
-    var player: PlayerController?
+    /// Present only when a host app can supply video frames (the VOD
+    /// editor); nil in the standalone studio, which then hides the
+    /// frame-grab affordances entirely.
+    var frameSource: (any ThumbFrameSource)?
     @Environment(\.undoManager) private var undoManager
 
     @State private var selectedLayerID: UUID?
@@ -109,8 +110,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             }
         }
         .sheet(isPresented: $showFramePicker) {
-            if let session {
-                FramePickerSheet(session: session)
+            if let frameSource {
+                FramePickerSheet(source: frameSource)
                     .frame(width: 640, height: 480)
             }
         }
@@ -215,9 +216,13 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                 Menu {
                     Button("Text") { addText() }
                     Button("Image file…") { addImageFile() }
-                    if let session, let player {
-                        Button("Frame at playhead") { session.grabTimelineFrame(at: player.currentTime) }
-                        Button("Frame picker…") { showFramePicker = true }
+                    if let frameSource {
+                        Button("Frame at playhead") {
+                            frameSource.grabFrameToCanvas(at: frameSource.playheadTime)
+                        }
+                        if frameSource.frameSourceDuration > 0 {
+                            Button("Frame picker…") { showFramePicker = true }
+                        }
                     }
                     Menu("Shape") {
                         ForEach(ShapeSpec.shapes, id: \.self) { shape in
@@ -948,7 +953,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                 Text(label).font(.caption2).foregroundStyle(Theme.textFaint)
             }
             ColorPicker("", selection: Binding(
-                get: { Color(nsColor: SocialOverlayRenderer.color(hex: binding.wrappedValue)) },
+                get: { Color(nsColor: HexColor.color(hex: binding.wrappedValue)) },
                 set: { color in
                     let rgba = NSColor(color).usingColorSpace(.deviceRGB) ?? .white
                     binding.wrappedValue = String(format: "%02X%02X%02X",
@@ -975,7 +980,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                             apply(document, "Canvas Colour")
                         } label: {
                             Circle()
-                                .fill(Color(nsColor: SocialOverlayRenderer.color(hex: hex)))
+                                .fill(Color(nsColor: HexColor.color(hex: hex)))
                                 .frame(width: 14, height: 14)
                                 .overlay(Circle().strokeBorder(
                                     doc.backgroundHex == hex ? Theme.accent : Theme.border,
@@ -1176,10 +1181,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     }
 }
 
-/// Scrub the source VOD and grab the exact frame — the reason this studio is
-/// in-house instead of Canva.
+/// Scrub the source and grab the exact frame — the reason this studio is
+/// in-house instead of Canva. It talks to a `ThumbFrameSource`, so it knows
+/// nothing about projects, sessions or players.
 private struct FramePickerSheet: View {
-    @ObservedObject var session: ProjectSession
+    let source: any ThumbFrameSource
     @Environment(\.dismiss) private var dismiss
 
     @State private var time: Double = 0
@@ -1201,7 +1207,7 @@ private struct FramePickerSheet: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             HStack {
-                Slider(value: $time, in: 0...(session.project.media?.durationSeconds ?? 1)) { editing in
+                Slider(value: $time, in: 0...max(1, source.frameSourceDuration)) { editing in
                     if !editing { loadPreview() }
                 }
                 Text(time.timecode)
@@ -1214,11 +1220,9 @@ private struct FramePickerSheet: View {
                 Spacer()
                 Button("Add to canvas") {
                     Task {
-                        let destination = session.project.paths.thumbnailsDir
-                            .appendingPathComponent("grab-\(Int(time * 10)).png")
-                        try? session.project.paths.createDirectories()
-                        try? await session.grabSourceFrame(at: time, to: destination)
-                        session.addSourceGrabToCanvas(path: destination.path, time: time)
+                        let destination = source.frameGrabDestination(at: time)
+                        try? await source.writeSourceFrame(at: time, to: destination)
+                        source.addFrameToCanvas(path: destination.path, time: time)
                         dismiss()
                     }
                 }
@@ -1229,7 +1233,7 @@ private struct FramePickerSheet: View {
         .padding(14)
         .background(Theme.background)
         .onAppear {
-            time = (session.project.media?.durationSeconds ?? 0) / 2
+            time = source.frameSourceDuration / 2
             loadPreview()
         }
     }
@@ -1239,7 +1243,7 @@ private struct FramePickerSheet: View {
         Task {
             let destination = URL(fileURLWithPath: NSTemporaryDirectory())
                 .appendingPathComponent("framepick-preview.png")
-            try? await session.grabSourceFrame(at: time, to: destination)
+            try? await source.writeSourceFrame(at: time, to: destination)
             preview = NSImage(contentsOf: destination)
             loading = false
         }

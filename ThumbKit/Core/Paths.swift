@@ -142,6 +142,14 @@ enum Paths {
         }
     }
 
+    /// What the standalone Thumbnail Studio needs — no Clips, no SFX, no
+    /// Projects folder, so a design-only app doesn't litter the Desktop.
+    static func ensureThumbDirectories() {
+        for dir in [appSupport, thumbTemplatesRoot, thumbLabRoot] {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+    }
+
     static func ensureAppDirectories() {
         for dir in [appSupport, projectsRoot, modelsRoot, downloadsRoot, thumbTemplatesRoot, sfxRoot] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

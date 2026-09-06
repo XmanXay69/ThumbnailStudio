@@ -159,14 +159,9 @@ enum SocialOverlayRenderer {
         return (roundedFont(size: size, weight: .heavy), paragraph)
     }
 
-    static func color(hex: String) -> NSColor {
-        var value: UInt64 = 0
-        let cleaned = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-        guard Scanner(string: cleaned).scanHexInt64(&value), cleaned.count == 6 else { return .white }
-        return NSColor(calibratedRed: CGFloat((value >> 16) & 0xFF) / 255,
-                       green: CGFloat((value >> 8) & 0xFF) / 255,
-                       blue: CGFloat(value & 0xFF) / 255, alpha: 1)
-    }
+    /// Kept as the name the overlay code already calls; the parse itself now
+    /// lives in ThumbKit so the standalone studio has it too.
+    static func color(hex: String) -> NSColor { HexColor.color(hex: hex) }
 
     private static func luminance(of color: NSColor) -> CGFloat {
         let rgb = color.usingColorSpace(.deviceRGB) ?? color
