@@ -2662,11 +2662,17 @@ do {
     check("image fill takes precedence over a gradient",
           abs(redFraction(both) - redFraction(filled)) < 0.005)
 
-    // A path that has gone missing falls back to the flat fill.
+    // A path that has gone missing falls back to the flat fill rather than
+    // drawing nothing — but the inspector has to SAY so, because a silent
+    // fallback is indistinguishable from the feature being broken. Found the
+    // hard way: a filename with a narrow no-break space in it failed to load
+    // and the fill just quietly did not happen.
     var broken = plain
     broken.imageFillPath = "/definitely/not/here.png"
     check("a missing fill image falls back to the plain fill",
           redFraction(broken) < 0.001)
+    check("and the missing file is detectable, so the UI can say so",
+          !FileManager.default.fileExists(atPath: broken.imageFillPath ?? ""))
     try? FileManager.default.removeItem(atPath: artPath)
 }
 

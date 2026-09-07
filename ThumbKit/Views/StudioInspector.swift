@@ -353,6 +353,16 @@ extension ThumbnailStudioPane {
                     }
                 }
                 .help("Fills the letters with a picture. Overrides the gradient.")
+                // A fill image that cannot be read falls back to the flat
+                // colour, which looks exactly like the feature not working.
+                // Say so rather than leaving the user to guess.
+                if let path = spec.imageFillPath, !path.isEmpty,
+                   !FileManager.default.fileExists(atPath: path) {
+                    Text("That fill image is missing — the letters fall back to the flat colour.")
+                        .font(Studio.Typo.caption)
+                        .foregroundStyle(Studio.Palette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 StudioRow("Gradient") {
                     HStack(spacing: Studio.Space.s) {
                         Toggle("", isOn: Binding(
