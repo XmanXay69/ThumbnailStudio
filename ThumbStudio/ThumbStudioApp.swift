@@ -8,7 +8,12 @@ import AppKit
 struct ThumbStudioApp: App {
     @NSApplicationDelegateAdaptor(StudioAppDelegate.self) private var delegate
 
-    init() { Paths.ensureThumbDirectories() }
+    init() {
+        Paths.ensureThumbDirectories()
+        // Tuning a cutout's edge writes a file per setting so going back is
+        // instant; the ones nothing points at any more go now.
+        Task.detached(priority: .background) { ThumbAssets.pruneUnreferenced() }
+    }
 
     var body: some Scene {
         WindowGroup {

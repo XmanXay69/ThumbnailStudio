@@ -40,6 +40,54 @@ enum ThumbAssets {
         return store(data: png, suffix: suffix)
     }
 
+    /// Deletes generated images no design points at any more.
+    ///
+    /// Every nudge of an edge slider writes a new cutout, because they are
+    /// keyed by their settings so going back to a value you already tried is
+    /// instant. That is the right trade for responsiveness and the wrong one
+    /// for disk, so the unreferenced ones go at launch. A file is kept if ANY
+    /// design or project thumbnail document names it — nothing is deleted on a
+    /// guess about age, because a cutout a design still uses can't be
+    /// regenerated without re-running Vision on a source that may have moved.
+    @discardableResult
+    static func pruneUnreferenced() -> Int {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil),
+              !files.isEmpty else { return 0 }
+
+        var referenced = Set<String>()
+        func harvest(_ url: URL) {
+            guard let data = try? Data(contentsOf: url),
+                  let doc = try? JSONDecoder().decode(ThumbDocument.self, from: data) else { return }
+            for layer in doc.layers {
+                guard case .image(let spec) = layer.kind else { continue }
+                referenced.insert(spec.path)
+                if let cutout = spec.cutoutPath { referenced.insert(cutout) }
+            }
+        }
+
+        for url in (try? fm.contentsOfDirectory(at: Paths.thumbLabRoot,
+                                                includingPropertiesForKeys: nil)) ?? []
+        where url.pathExtension == "json" {
+            harvest(url)
+        }
+        for project in (try? fm.contentsOfDirectory(at: Paths.projectsRoot,
+                                                    includingPropertiesForKeys: nil)) ?? [] {
+            harvest(project.appendingPathComponent("thumbstudio.json"))
+        }
+        for url in (try? fm.contentsOfDirectory(at: Paths.thumbTemplatesRoot,
+                                                includingPropertiesForKeys: nil)) ?? []
+        where url.pathExtension == "json" {
+            harvest(url)
+        }
+
+        var removed = 0
+        for file in files where !referenced.contains(file.path) {
+            if (try? fm.removeItem(at: file)) != nil { removed += 1 }
+        }
+        return removed
+    }
+
     /// Where a cutout of this source file belongs. Keyed by the source's own
     /// path and modification date, so editing the original produces a new
     /// cutout rather than silently reusing a stale one.

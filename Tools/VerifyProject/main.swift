@@ -2620,6 +2620,38 @@ do {
     check("cutouts live in the app's own folder, not beside the photo",
           a.deletingLastPathComponent().lastPathComponent == "ThumbAssets"
               && !a.path.hasPrefix(NSTemporaryDirectory()))
+
+    // Pruning must never take a file a design still points at — a cutout
+    // cannot be regenerated if its source has since moved.
+    let keep = ThumbAssets.store(data: Data("kept-asset".utf8), suffix: "keep")
+    let drop = ThumbAssets.store(data: Data("dropped-asset".utf8), suffix: "drop")
+    if let keep, let drop {
+        var referencing = ThumbDocument()
+        var spec = ImageSpec(path: "/somewhere/original.png")
+        spec.cutoutPath = keep.path
+        spec.useCutout = true
+        referencing.layers = [ThumbLayer(kind: .image(spec))]
+        let designURL = Paths.thumbLabRoot
+            .appendingPathComponent("verify-prune-fixture.json")
+        try? FileManager.default.createDirectory(at: Paths.thumbLabRoot,
+                                                 withIntermediateDirectories: true)
+        try? JSONEncoder().encode(referencing).write(to: designURL, options: .atomic)
+
+        ThumbAssets.pruneUnreferenced()
+        check("pruning keeps an asset a design still points at",
+              FileManager.default.fileExists(atPath: keep.path))
+        check("pruning removes an asset nothing points at",
+              !FileManager.default.fileExists(atPath: drop.path))
+
+        try? FileManager.default.removeItem(at: designURL)
+        ThumbAssets.pruneUnreferenced()
+        check("once the design is gone, so is its asset",
+              !FileManager.default.fileExists(atPath: keep.path))
+    } else {
+        check("pruning keeps an asset a design still points at", false)
+        check("pruning removes an asset nothing points at", false)
+        check("once the design is gone, so is its asset", false)
+    }
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
