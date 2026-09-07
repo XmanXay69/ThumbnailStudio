@@ -1,6 +1,3 @@
-// FILE 5 — ThumbnailStudio/ThumbShortcutCheatSheet.swift
-// The ⌘/ panel, and the single source the tooltips quote.
-// =====================================================================
 import SwiftUI
 
 /// One shortcut, in the order a person reads it: what it does, then how.

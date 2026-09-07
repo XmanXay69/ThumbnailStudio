@@ -1,6 +1,3 @@
-// FILE 2 — ThumbKit/ThumbKeyboard.swift
-// The key-handling component. This is the load-bearing file.
-// =====================================================================
 import AppKit
 import SwiftUI
 

@@ -1,6 +1,3 @@
-// FILE 4 — ThumbnailStudio/ThumbCommands.swift
-// The menu bar. Attach with `.commands { ThumbCommands() }` on the Scene.
-// =====================================================================
 import SwiftUI
 
 /// Everything here carries a ⌘ so it is safe as a key equivalent: AppKit

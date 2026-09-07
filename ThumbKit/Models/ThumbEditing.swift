@@ -1,6 +1,3 @@
-// FILE 1 — ThumbKit/ThumbEditing.swift
-// The new model verbs, plus the undo-coalescing fix.
-// =====================================================================
 import AppKit
 import Foundation
 
@@ -18,15 +15,6 @@ extension UndoCoalescing {
         "Bring to Front", "Bring Forward", "Send Backward", "Send to Back",
     ]
 }
-
-// NOTE: also change ClipEdit.swift's shouldCoalesce to consult the list:
-//
-//   static func shouldCoalesce(action: String?, lastAction: String?,
-//                              lastAt: Date, now: Date) -> Bool {
-//       guard let action, action == lastAction,
-//             !discrete.contains(action) else { return false }
-//       return now.timeIntervalSince(lastAt) < 0.8
-//   }
 
 extension ThumbDocument {
 

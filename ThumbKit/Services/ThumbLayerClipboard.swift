@@ -1,6 +1,3 @@
-// FILE 3 — ThumbKit/ThumbLayerClipboard.swift
-// Layer clipboard, including pasting an image off the system pasteboard.
-// =====================================================================
 import AppKit
 import Foundation
 import UniformTypeIdentifiers

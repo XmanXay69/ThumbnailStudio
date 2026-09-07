@@ -1,6 +1,3 @@
-// FILE 6 — ThumbnailStudio/ThumbEditorModel.swift
-// The controller the pane owns. Every verb, one undo step each.
-// =====================================================================
 import AppKit
 import SwiftUI
 
