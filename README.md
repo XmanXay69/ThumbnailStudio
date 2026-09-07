@@ -52,6 +52,23 @@ Services so it shows up in Spotlight and Launchpad straight away. After that it'
 ⌘-Space → "VOD Editor" like anything else — the CLI below is only for testing.
 The icon is a waveform trimmed down to its peaks, over a playhead.
 
+### Thumbnail Studio, as its own app
+
+The thumbnail half of this app is also a standalone Mac app, so you can design a
+thumbnail without opening a VOD — and, more to the point, while a four-hour VOD
+is transcribing next door.
+
+```bash
+Tools/install-thumbstudio.sh
+```
+
+Builds and installs `ThumbStudio.app` (Finder and Spotlight show it as
+"Thumbnail Studio"). Both apps share `ThumbKit/`, so a fix to the studio lands
+in both, and both read the same designs out of
+`~/Library/Application Support/VODEditor/ThumbLab/`. Whichever app you bring to
+the front adopts what is on disk first, so having both open on one design can't
+silently clobber it.
+
 ### Headless ingest
 
 The whole pipeline runs unattended, which is how it gets tested against a real
@@ -109,7 +126,7 @@ transcript decoding, playhead lookup vs. a linear scan, word-timing invariants
 (monotonic, non-zero, no unhighlighted gaps), and waveform re-bucketing at every
 zoom level including degenerate ranges. Plus caption phrasing, the ducking
 envelope and filter graph, long-form input-index bookkeeping, and thumbnail and
-packaging output, link parsing, the playlist rewrite, thumbnail layers, and the two-box portrait layout. **573 checks** against
+packaging output, link parsing, the playlist rewrite, thumbnail layers, and the two-box portrait layout. **616 checks** against
 a full-length VOD; two that only mean something at length are skipped on short
 sources. Two checks about candidate overlap and cue phrasing assert the
 generation-time rules loosely enough to stay true on a project the user has
@@ -879,6 +896,55 @@ collision fix, mode-switch and bin animations.
   first" sort, hook lines ("Open on: …") in the inspector, flame count in the
   header bar.
 
+
+### Thumbnail Studio as its own app (September 2026, fifth batch)
+
+- **A second app, one codebase (`ThumbKit/`)** — the studio's files moved to a
+  shared folder that both the VOD editor and a new `ThumbStudio` target
+  compile, as one `PBXFileSystemSynchronizedRootGroup` listed in two targets.
+  The only thing the studio needed from the VOD app was frame grabbing, so
+  that became `ThumbFrameSource`: the VOD editor passes a bridge over its
+  session and player, the standalone app passes nothing and the frame-grab
+  affordances simply aren't there. Everything else — `NormalizedRect`,
+  `UndoCoalescing`, `TimelineSnap`, `TimeInterval.timecode`, hex parsing —
+  moved into ThumbKit as small shared files rather than being duplicated.
+- **A keyboard, at last** — the old layer was thirteen invisible zero-size
+  `Button`s carrying `.keyboardShortcut`, which is why Delete could never be
+  added: a key equivalent is matched *before* the responder chain, so a bare
+  key bound that way fires while you are typing. Now the menu bar owns every
+  ⌘ shortcut (macOS renders, validates and enables them for free) and one
+  `NSEvent` local monitor owns the unmodified keys — Delete, arrows, Tab,
+  Escape, Return — behind three gates: our window must be key with no sheet
+  attached, the first responder must not be an editable `NSTextView` (which
+  is what a SwiftUI `TextField` borrows as its field editor), and anything
+  carrying ⌘ passes straight through. An arrow press moves exactly one
+  exported pixel; a held arrow is one undo step, but two Deletes are two.
+- **Remove Background, properly** — it existed, buried in the image
+  inspector, and wrote a `.cutout.png` next to your source photo. Now it has
+  its own inspector section with the three controls that decide whether a
+  cutout looks lifted or pasted (edge in, soften, harden), a subject picker
+  when Vision finds more than one, and app-owned content-addressed storage,
+  so re-picking settings you already tried costs nothing. Vision's raw mask
+  keeps a fringe of old background; the refinement is a Core Image morphology
+  contract, a contrast push, then a blur — in that order, because blurring
+  first and eroding second eats the softness you just paid for. Measured at
+  0.14 s on a 1920×1080 frame. Honest limits: fine hair, glass and motion
+  blur are where it struggles, and the UI says so.
+- **The visuals, rebuilt** — the studio wore the VOD editor's cinema-dark
+  theme, whose whole premise ("so the footage is the only bright thing on
+  screen") does not exist in a design tool, and whose surfaces are blue-tinted
+  enough to shift how your artwork reads. The chrome is now achromatic
+  graphite with one accent, on an 8pt scale, four control heights and six type
+  styles. The editor gained the anatomy every tool of this kind has: a tool
+  rail, a layers list with live thumbnails of each layer, the artboard on a
+  workbench with real zoom, and an inspector that shows only what applies to
+  what is selected. Export left the object inspector and became its own sheet.
+  Deleted: the gradient hero, the uppercase micro-labels, the walls of
+  `LabeledContent` sliders, and every hidden shortcut button.
+- **Previews stopped lying** — gallery cards and layer thumbnails used to
+  render a *shrunken document*, which shrinks the canvas but not the stroke
+  widths, shadow radii and corner radii, because those are absolute pixels.
+  They now render at document size and downsample the bitmap.
 
 ### Thumb Lab + Canva-grade studio (July 2026, fourth batch)
 
