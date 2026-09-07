@@ -36,7 +36,7 @@ struct CropSheet: View {
             HStack {
                 Text("Crop & cut")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Studio.Palette.textPrimary)
                 Picker("", selection: $aspect) {
                     ForEach(presets, id: \.label) { preset in
                         Text(preset.label).tag(preset.ratio)
@@ -54,7 +54,7 @@ struct CropSheet: View {
                     aspect = nil
                     cutEdge = "none"
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.studio(.secondary, .large))
                 .controlSize(.small)
             }
 
@@ -63,7 +63,7 @@ struct CropSheet: View {
             HStack(spacing: 8) {
                 Text("Cut")
                     .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Studio.Palette.textSecondary)
                 Picker("", selection: $cutEdge) {
                     Text("None").tag("none")
                     Image(systemName: "arrowtriangle.left").tag("left")
@@ -103,7 +103,7 @@ struct CropSheet: View {
                     // Window chrome: border, thirds, handles.
                     let window = cropRect(in: fit)
                     windowShape(in: fit)
-                        .stroke(Theme.accent, lineWidth: 1.5)
+                        .stroke(Studio.Palette.accent, lineWidth: 1.5)
                     thirdsGrid(in: window)
                     ForEach(Corner.allCases, id: \.self) { corner in
                         handle(corner, window: window, fit: fit)
@@ -119,10 +119,10 @@ struct CropSheet: View {
             HStack {
                 Text(cropSummary)
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Theme.textFaint)
+                    .foregroundStyle(Studio.Palette.textTertiary)
                 Spacer()
                 Button("Cancel") { dismiss() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.studio(.secondary, .large))
                 Button("Apply") {
                     let full = crop.width > 0.99 && crop.height > 0.99
                     onApply(Result(crop: full ? nil : crop.clamped(),
@@ -130,12 +130,12 @@ struct CropSheet: View {
                                    cutFlip: cutFlip))
                     dismiss()
                 }
-                .buttonStyle(HeroButtonStyle())
+                .buttonStyle(.studio(.primary, .large))
             }
         }
         .padding(16)
         .frame(width: 680, height: 540)
-        .background(Theme.background)
+        .background(Studio.Palette.windowBackground)
         .onAppear {
             if let initial { crop = initial }
             cutEdge = initialCut.edge
@@ -205,7 +205,7 @@ struct CropSheet: View {
             }
         }()
         return Circle()
-            .fill(Theme.accent)
+            .fill(Studio.Palette.accent)
             .frame(width: 11, height: 11)
             .position(point)
             .gesture(

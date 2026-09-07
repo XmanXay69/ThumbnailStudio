@@ -30,6 +30,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var showExport = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
+    @State var isDropTargeted = false
     @State var guideX: Double?
     @State var guideY: Double?
 

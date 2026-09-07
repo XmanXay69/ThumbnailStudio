@@ -74,6 +74,46 @@ extension ThumbnailStudioPane {
         .onTapGesture { location in
             placeOrDeselect(at: location, width: width, height: height)
         }
+        // Dropping a file on the artboard is the fastest way to get a face
+        // onto a thumbnail, and it is the first thing anyone tries.
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers, location in
+            handleDrop(providers, at: CGPoint(x: location.x / max(1, width),
+                                              y: location.y / max(1, height)))
+        }
+        .overlay {
+            if isDropTargeted {
+                Rectangle()
+                    .strokeBorder(Studio.Palette.accent, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Files first, then raw bitmaps. A dropped file keeps its own path so the
+    /// layer points at the original; a dropped bitmap has no file of its own,
+    /// so it is written into the app's asset folder before becoming a layer.
+    private func handleDrop(_ providers: [NSItemProvider], at point: CGPoint) -> Bool {
+        guard let provider = providers.first else { return false }
+        if provider.canLoadObject(ofClass: URL.self) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, NSImage(contentsOf: url) != nil else { return }
+                Task { @MainActor in
+                    addLayer(.image(ImageSpec(path: url.path)), at: point, action: "Add Image")
+                }
+            }
+            return true
+        }
+        if provider.canLoadObject(ofClass: NSImage.self) {
+            _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                guard let image = image as? NSImage,
+                      let stored = ThumbAssets.store(image: image) else { return }
+                Task { @MainActor in
+                    addLayer(.image(ImageSpec(path: stored.path)), at: point, action: "Add Image")
+                }
+            }
+            return true
+        }
+        return false
     }
 
     /// A click with a creation tool active places that layer where you clicked;

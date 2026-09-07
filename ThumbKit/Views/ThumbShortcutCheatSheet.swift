@@ -97,11 +97,11 @@ struct ThumbShortcutCheatSheet: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Keyboard")
                     .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Studio.Palette.textPrimary)
                 Spacer()
                 Text("⌘ /")
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Theme.textFaint)
+                    .foregroundStyle(Studio.Palette.textTertiary)
             }
             .padding(.horizontal, 24)
             .padding(.top, 22)
@@ -116,11 +116,11 @@ struct ThumbShortcutCheatSheet: View {
                 .padding(.bottom, 22)
             }
 
-            Divider().overlay(Theme.textFaint.opacity(0.25))
+            Divider().overlay(Studio.Palette.textTertiary.opacity(0.25))
             HStack {
                 Text("Arrow keys, ⌫ and ↩ act on the canvas — never while you're typing in a field.")
                     .font(.caption2)
-                    .foregroundStyle(Theme.textFaint)
+                    .foregroundStyle(Studio.Palette.textTertiary)
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -129,7 +129,7 @@ struct ThumbShortcutCheatSheet: View {
             .padding(.vertical, 14)
         }
         .frame(width: 620, height: 520)
-        .background(Theme.background)
+        .background(Studio.Palette.windowBackground)
     }
 
     private func column(_ groups: [ThumbShortcutGroup]) -> some View {
@@ -139,7 +139,7 @@ struct ThumbShortcutCheatSheet: View {
                     Text(group.name.uppercased())
                         .font(.system(size: 10, weight: .semibold))
                         .tracking(0.8)
-                        .foregroundStyle(Theme.textFaint)
+                        .foregroundStyle(Studio.Palette.textTertiary)
                     ForEach(group.shortcuts) { shortcut in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             HStack(spacing: 3) {
@@ -150,7 +150,7 @@ struct ThumbShortcutCheatSheet: View {
                             .frame(width: 96, alignment: .leading)
                             Text(shortcut.title)
                                 .font(.system(size: 12))
-                                .foregroundStyle(Theme.textSecondary)
+                                .foregroundStyle(Studio.Palette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
@@ -169,13 +169,13 @@ private struct KeyCap: View {
     var body: some View {
         Text(label)
             .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(Theme.textPrimary)
+            .foregroundStyle(Studio.Palette.textPrimary)
             .padding(.horizontal, label.count > 2 ? 6 : 5)
             .padding(.vertical, 2)
             .frame(minWidth: 20)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Theme.surfaceRaised)
+                    .fill(Studio.Palette.control)
                     .overlay(RoundedRectangle(cornerRadius: 4)
                         .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
             )
