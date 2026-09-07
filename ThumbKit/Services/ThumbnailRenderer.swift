@@ -15,10 +15,17 @@ enum ThumbnailRenderer {
     /// providers.
     @MainActor
     static func renderForStudio(_ document: ThumbDocument) -> NSImage? {
-        render(document) { spec in AdjustedImageCache.shared.image(for: spec) }
+        render(document, showingPlaceholders: true) { spec in
+            AdjustedImageCache.shared.image(for: spec)
+        }
     }
 
+    /// `showingPlaceholders` draws the "double-click to set image" slot for an
+    /// empty image layer. That is editor chrome: true on the canvas, false
+    /// everywhere the pixels are the deliverable, so an unfilled template slot
+    /// can never be baked into an exported thumbnail.
     static func render(_ document: ThumbDocument,
+                       showingPlaceholders: Bool = false,
                        provider: ImageProvider) -> NSImage? {
         let width = document.width
         let height = document.height
@@ -57,7 +64,8 @@ enum ThumbnailRenderer {
             cg?.translateBy(x: center.x, y: center.y)
             cg?.rotate(by: -CGFloat(layer.rotationDegrees) * .pi / 180)
             cg?.translateBy(x: -center.x, y: -center.y)
-            draw(layer, in: size, center: center, provider: provider)
+            draw(layer, in: size, center: center, provider: provider,
+                 showingPlaceholders: showingPlaceholders)
             cg?.restoreGState()
         }
 
@@ -77,10 +85,12 @@ enum ThumbnailRenderer {
     }
 
     private static func draw(_ layer: ThumbLayer, in size: CGSize,
-                             center: CGPoint, provider: ImageProvider) {
+                             center: CGPoint, provider: ImageProvider,
+                             showingPlaceholders: Bool) {
         switch layer.kind {
         case .image(let spec):
-            drawImage(spec, layer: layer, in: size, center: center, provider: provider)
+            drawImage(spec, layer: layer, in: size, center: center, provider: provider,
+                      showingPlaceholders: showingPlaceholders)
         case .text(let spec):
             drawText(spec, layer: layer, in: size, center: center)
         case .shape(let spec):
@@ -91,10 +101,12 @@ enum ThumbnailRenderer {
     // MARK: - Image
 
     private static func drawImage(_ spec: ImageSpec, layer: ThumbLayer, in size: CGSize,
-                                  center: CGPoint, provider: ImageProvider) {
+                                  center: CGPoint, provider: ImageProvider,
+                                  showingPlaceholders: Bool) {
         guard let image = provider(spec), image.size.width > 0 else {
-            // A template's empty face slot: draw the placeholder so the slot
-            // is visible and selectable.
+            // A template's empty face slot: visible and selectable while you
+            // work, absent from anything anyone else will see.
+            guard showingPlaceholders else { return }
             let width = layer.widthFraction * size.width
             let height = layer.heightFraction * size.height
             let rect = NSRect(x: center.x - width / 2, y: center.y - height / 2,
@@ -287,12 +299,15 @@ enum ThumbnailRenderer {
                               .withAlphaComponent(0.8).cgColor)
         }
         // Stroke pass first, then fill — a single stroked pass eats the fill.
+        // The shadow belongs to the outermost thing drawn: the stroke when
+        // there is one, otherwise the fill. Clearing it before the fill pass
+        // regardless is why stroke-free text never had a shadow.
         if spec.strokeWidth > 0.1 {
             NSAttributedString(string: text,
                                attributes: textAttributes(spec, canvasHeight: size.height,
                                                           strokePass: true)).draw(in: rect)
+            cg?.setShadow(offset: .zero, blur: 0, color: nil)
         }
-        cg?.setShadow(offset: .zero, blur: 0, color: nil)
 
         if let gradientHex = spec.gradientHex {
             // Gradient fill: the text drawn into its own image becomes a
@@ -320,6 +335,9 @@ enum ThumbnailRenderer {
                                attributes: textAttributes(spec, canvasHeight: size.height,
                                                           strokePass: false)).draw(in: rect)
         }
+        // The shadow is per-context, not per-draw: leave it set and the next
+        // layer inherits it.
+        cg?.setShadow(offset: .zero, blur: 0, color: nil)
     }
 
     // MARK: - Shapes
@@ -488,6 +506,18 @@ enum ThumbnailRenderer {
             quality -= 0.05
         }
         return nil
+    }
+}
+
+extension ThumbnailRenderer {
+    /// The off-main-actor provider every preview uses. Reads the file and
+    /// applies the layer's adjustments, exactly as the canvas and the export
+    /// do — a preview that skips them is a preview of a different image.
+    nonisolated static let fileProvider: ImageProvider = { spec in
+        guard !spec.effectivePath.isEmpty,
+              let image = NSImage(contentsOfFile: spec.effectivePath) else { return nil }
+        guard spec.hasAdjustments else { return image }
+        return AdjustedImageCache.adjusted(image, spec: spec) ?? image
     }
 }
 

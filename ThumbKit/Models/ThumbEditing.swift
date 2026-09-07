@@ -23,7 +23,10 @@ extension ThumbDocument {
     @discardableResult
     mutating func removeLayers(ids: Set<UUID>) -> Bool {
         let before = layers.count
-        layers.removeAll { ids.contains($0.id) }
+        // Locked layers survive. A lock reads as protection everywhere else in
+        // the app — drag, resize and nudge all honour it — so Delete honouring
+        // it too is the only consistent answer.
+        layers.removeAll { ids.contains($0.id) && !$0.isLocked }
         return layers.count != before
     }
 

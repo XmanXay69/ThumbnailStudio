@@ -81,7 +81,13 @@ enum CutoutService {
         // happen on the alpha channel before it is applied to the colour.
         let maskBuffer = try result.generateScaledMaskForImage(forInstances: instances,
                                                               from: handler)
-        guard let colour = CIImage(contentsOf: source) else { throw CutoutError.unreadable }
+        // VNImageRequestHandler applies the file's EXIF orientation, so the
+        // matte comes back rotated. CIImage does not, unless told — and a
+        // portrait photo off a phone would otherwise have a 512x1024 matte
+        // stretched across a 1024x512 frame.
+        guard let colour = CIImage(contentsOf: source,
+                                   options: [.applyOrientationProperty: true])
+        else { throw CutoutError.unreadable }
         var matte = CIImage(cvPixelBuffer: maskBuffer)
         // The scaled mask comes back at the model's resolution, not the
         // photo's. Stretch it onto the image before compositing, or the cutout

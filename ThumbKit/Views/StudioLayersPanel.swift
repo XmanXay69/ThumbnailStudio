@@ -236,9 +236,9 @@ final class LayerThumbnailCache {
         only.rotationDegrees = 0
         solo.layers = [only]
         let rendered = await Task.detached(priority: .utility) { [solo] in
-            guard let full = ThumbnailRenderer.render(solo, provider: { spec in
-                spec.effectivePath.isEmpty ? nil : NSImage(contentsOfFile: spec.effectivePath)
-            }) else { return nil as NSImage? }
+            guard let full = ThumbnailRenderer.render(
+                solo, showingPlaceholders: true,
+                provider: ThumbnailRenderer.fileProvider) else { return nil as NSImage? }
             return Self.downsampled(full, maxWidth: 96)
         }.value
         if let rendered { cache[key] = rendered }

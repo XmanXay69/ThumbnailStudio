@@ -31,6 +31,10 @@ struct ThumbLabView: View {
             if let store {
                 ThumbEditorView(store: store, onBack: closeEditor,
                                 onNewDesign: { create(preset: ThumbDocument.canvasPresets[0]) })
+                    // Identity is the file: switching designs without this
+                    // reuses the view, keeps its editor model bound to the
+                    // old store, and silently edits the design you left.
+                    .id(store.fileURL)
             } else {
                 gallery
             }
@@ -335,11 +339,13 @@ struct ThumbLabView: View {
     private func reload() { designs = StandaloneThumbStore.designs() }
 
     private func closeEditor() {
+        store?.detachUndo()
         store = nil
         reload()
     }
 
     private func open(_ design: StandaloneThumbStore.Design) {
+        store?.detachUndo()
         store = StandaloneThumbStore(fileURL: design.url)
     }
 
@@ -347,12 +353,14 @@ struct ThumbLabView: View {
     /// and lets you rename it in the editor, because a modal asking for a name
     /// before you have drawn anything is friction with no payoff.
     private func create(preset: (name: String, width: Int, height: Int)) {
+        store?.detachUndo()
         store = StandaloneThumbStore.create(named: "Untitled",
                                             width: preset.width, height: preset.height)
         reload()
     }
 
     private func createFromTemplate(_ name: String, _ document: ThumbDocument) {
+        store?.detachUndo()
         let created = StandaloneThumbStore.create(
             named: name, width: document.width, height: document.height)
         created.applyThumbDoc(document, action: nil)
@@ -400,9 +408,8 @@ private struct LabPreview: View {
                 // Full size, then downsampled: shrinking the *document*
                 // instead would shrink the canvas but not the stroke widths
                 // and shadow radii, which are absolute pixels.
-                guard let full = ThumbnailRenderer.render(doc, provider: { spec in
-                    NSImage(contentsOfFile: spec.effectivePath)
-                }) else { return nil }
+                guard let full = ThumbnailRenderer.render(
+                    doc, provider: ThumbnailRenderer.fileProvider) else { return nil }
                 return LayerThumbnailCache.downsampled(full, maxWidth: 600)
             }.value
         }
@@ -427,9 +434,9 @@ private struct DocPreview: View {
         .task {
             let doc = document
             image = await Task.detached(priority: .utility) { () -> NSImage? in
-                guard let full = ThumbnailRenderer.render(doc, provider: { spec in
-                    spec.effectivePath.isEmpty ? nil : NSImage(contentsOfFile: spec.effectivePath)
-                }) else { return nil }
+                guard let full = ThumbnailRenderer.render(
+                    doc, showingPlaceholders: true,
+                    provider: ThumbnailRenderer.fileProvider) else { return nil }
                 return LayerThumbnailCache.downsampled(full, maxWidth: 400)
             }.value
         }

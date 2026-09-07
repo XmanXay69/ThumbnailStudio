@@ -1107,23 +1107,31 @@ final class ProjectSession: ObservableObject {
         applyThumbDoc(document, action: "Grab Frame")
     }
 
-    /// One-click background removal on an image layer, entirely on this Mac.
-    /// The original stays; the cutout is a separate PNG the layer toggles.
+    /// One-click background removal on an image layer, entirely on this
+    /// Mac. The original stays; the cutout is a separate PNG the layer
+    /// toggles.
     func removeBackground(layerID: UUID) {
         guard case .image(let spec)? = thumbDoc.layers.first(where: { $0.id == layerID })?.kind,
               !spec.path.isEmpty else { return }
         isCuttingOut = true
         thumbStudioError = nil
-        let document = thumbDoc
         Task.detached(priority: .userInitiated) { [weak self] in
-            let result = CutoutRun.perform(document: document, layerID: layerID)
+            let result = CutoutRun.perform(spec: spec)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isCuttingOut = false
                 switch result {
-                case .success(let updated):
+                case .success(let cutout):
+                    // Re-read now, not before: Vision took a moment and the
+                    // user may have moved, typed or deleted something in it.
+                    var document = self.thumbDoc
+                    guard let index = document.layers.firstIndex(where: { $0.id == layerID }),
+                          case .image(var current) = document.layers[index].kind
+                    else { return }
+                    CutoutRun.applyResult(cutout, to: &current)
+                    document.layers[index].kind = .image(current)
                     AdjustedImageCache.shared.invalidate()
-                    self.applyThumbDoc(updated, action: "Remove Background")
+                    self.applyThumbDoc(document, action: "Remove Background")
                 case .failure(let error):
                     self.thumbStudioError = error.localizedDescription
                 }

@@ -2482,6 +2482,98 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Regressions found in review")
+do {
+    // A lock reads as protection everywhere else — drag, resize, nudge all
+    // honour it — so Delete has to as well.
+    var doc = ThumbDocument()
+    var locked = ThumbLayer(kind: .text(TextSpec(text: "background")))
+    locked.isLocked = true
+    let free = ThumbLayer(kind: .text(TextSpec(text: "headline")))
+    doc.layers = [locked, free]
+    check("delete leaves a locked layer alone",
+          doc.removeLayers(ids: [locked.id, free.id]) && doc.layers.map(\.id) == [locked.id])
+    check("deleting only locked layers reports nothing",
+          !doc.removeLayers(ids: [locked.id]) && doc.layers.count == 1)
+
+    // The placeholder for an unfilled image slot is editor chrome. It must
+    // never reach a file someone else will see.
+    var slot = ThumbDocument()
+    slot.width = 160
+    slot.height = 90
+    slot.backgroundHex = "000000"
+    slot.layers = [ThumbLayer(kind: .image(ImageSpec(path: "")),
+                              widthFraction: 0.8, heightFraction: 0.8)]
+    func litFraction(_ image: NSImage?) -> Double {
+        guard let image, let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        var lit = 0.0
+        var total = 0.0
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                if colour.redComponent > 0.12 { lit += 1 }
+                total += 1
+            }
+        }
+        return total > 0 ? lit / total : -1
+    }
+    let exported = ThumbnailRenderer.render(slot) { _ in nil }
+    let onCanvas = ThumbnailRenderer.render(slot, showingPlaceholders: true) { _ in nil }
+    check("an unfilled image slot is invisible in an export",
+          litFraction(exported) < 0.001, String(format: "%.4f", litFraction(exported)))
+    check("the same slot is visible while you are editing",
+          litFraction(onCanvas) > 0.3, String(format: "%.3f", litFraction(onCanvas)))
+
+    // Stroke-free text — every sticker — asked for a shadow and never got one,
+    // because the shadow was cleared before anything was drawn.
+    func shadowSpread(strokeWidth: Double) -> Double {
+        var document = ThumbDocument()
+        document.width = 200
+        document.height = 120
+        document.backgroundHex = "FFFFFF"
+        var spec = TextSpec(text: "A")
+        spec.sizeFraction = 0.5
+        spec.fillHex = "FFFFFF"
+        spec.strokeWidth = strokeWidth
+        spec.shadowEnabled = true
+        spec.shadowHex = "000000"
+        spec.shadowBlur = 6
+        spec.shadowOffset = 4
+        document.layers = [ThumbLayer(kind: .text(spec), widthFraction: 0.9)]
+        guard let image = ThumbnailRenderer.render(document, provider: { _ in nil }),
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        // White text on white: anything darker than white IS the shadow.
+        var dark = 0.0
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                if colour.redComponent < 0.9 { dark += 1 }
+            }
+        }
+        return dark
+    }
+    check("stroke-free text still casts its drop shadow",
+          shadowSpread(strokeWidth: 0) > 20, "\(shadowSpread(strokeWidth: 0)) dark pixels")
+    check("stroked text casts one too", shadowSpread(strokeWidth: 8) > 20)
+
+    // A freshly lifted subject gets the treatment that separates it from the
+    // background; a re-lift must not stomp what the user has since set.
+    var fresh = ImageSpec(path: "/photo.png")
+    CutoutRun.applyResult(URL(fileURLWithPath: "/cut.png"), to: &fresh)
+    check("a new cutout gets the shadow and outline treatment",
+          fresh.useCutout && fresh.shadowEnabled && fresh.strokeWidth >= 6
+              && fresh.cutoutPath == "/cut.png")
+    var retuned = fresh
+    retuned.shadowEnabled = false
+    retuned.strokeWidth = 0
+    CutoutRun.applyResult(URL(fileURLWithPath: "/cut2.png"), to: &retuned)
+    check("re-lifting keeps the treatment you chose",
+          !retuned.shadowEnabled && retuned.strokeWidth == 0
+              && retuned.cutoutPath == "/cut2.png")
+}
+
 section("Background removal")
 do {
     // A white square on black is a matte: the square is the subject.

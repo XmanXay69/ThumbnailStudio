@@ -69,6 +69,7 @@ swiftc -O -o "$BIN" \
   ThumbKit/Services/ThumbnailRenderer.swift \
   ThumbKit/Services/ThumbAssets.swift \
   ThumbKit/Services/CutoutService.swift \
+  ThumbKit/Services/CutoutRun.swift \
   VODEditor/Services/PunchInService.swift \
   VODEditor/Services/ReframeService.swift \
   VODEditor/Services/ReframeSampler.swift \

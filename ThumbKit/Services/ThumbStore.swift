@@ -45,6 +45,9 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     /// The file's timestamp as of our own last read or write. Anything newer
     /// on disk was written by somebody else.
     private var knownModified: Date?
+    /// Set when the file this store represents has gone. Writes stop rather
+    /// than recreating it.
+    private var isDetached = false
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -67,7 +70,15 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     /// other, so whoever comes to the front adopts what's on disk first. You
     /// can only type in one app at a time, which makes this enough.
     func reloadIfChangedExternally() {
-        guard let onDisk = Self.modified(at: fileURL) else { return }
+        guard let onDisk = Self.modified(at: fileURL) else {
+            // The other app renamed or trashed this design. Persisting again
+            // would resurrect it at the old path — undoing a delete the user
+            // confirmed, or forking the work under two names after a rename.
+            isDetached = true
+            thumbStudioError = "This design was renamed or deleted in another window. "
+                + "Editing here won't be saved."
+            return
+        }
         guard let known = knownModified, onDisk > known else {
             knownModified = onDisk
             return
@@ -78,7 +89,10 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         knownModified = onDisk
         guard decoded != thumbDoc else { return }
         thumbDoc = decoded
-        timelineUndoManager?.removeAllActions()
+        // Scoped to this store: in the VOD editor the undo manager is the
+        // window's, shared with the timeline, and clearing it wholesale would
+        // throw away edits that have nothing to do with thumbnails.
+        timelineUndoManager?.removeAllActions(withTarget: self)
         thumbStudioError = "Reloaded — this design was edited in another window."
     }
 
@@ -121,8 +135,9 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
             thumbStudioError = "Couldn't rename this design."
             return false
         }
-        fileURL = target
         objectWillChange.send()
+        fileURL = target
+        knownModified = Self.modified(at: target)
         return true
     }
 
@@ -170,12 +185,22 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         undo.setActionName(action)
     }
 
+    /// Called when this design is closed. Its undo entries target this store
+    /// and would otherwise stay on the window's undo manager, so pressing ⌘Z
+    /// in the next design you open would rewrite the previous one's file.
+    func detachUndo() {
+        timelineUndoManager?.removeAllActions(withTarget: self)
+        timelineUndoManager = nil
+        endUndoRun()
+    }
+
     func endUndoRun() {
         lastUndoAction = nil
         lastUndoRegistration = .distantPast
     }
 
     private func persist() {
+        guard !isDetached else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? JSONEncoder().encode(thumbDoc).write(to: fileURL, options: .atomic)
@@ -187,16 +212,23 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
               !spec.path.isEmpty else { return }
         isCuttingOut = true
         thumbStudioError = nil
-        let document = thumbDoc
         Task.detached(priority: .userInitiated) { [weak self] in
-            let result = CutoutRun.perform(document: document, layerID: layerID)
+            let result = CutoutRun.perform(spec: spec)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isCuttingOut = false
                 switch result {
-                case .success(let updated):
+                case .success(let cutout):
+                    // Re-read now, not before: Vision took a moment and the
+                    // user may have moved, typed or deleted something in it.
+                    var document = self.thumbDoc
+                    guard let index = document.layers.firstIndex(where: { $0.id == layerID }),
+                          case .image(var current) = document.layers[index].kind
+                    else { return }
+                    CutoutRun.applyResult(cutout, to: &current)
+                    document.layers[index].kind = .image(current)
                     AdjustedImageCache.shared.invalidate()
-                    self.applyThumbDoc(updated, action: "Remove Background")
+                    self.applyThumbDoc(document, action: "Remove Background")
                 case .failure(let error):
                     self.thumbStudioError = error.localizedDescription
                 }

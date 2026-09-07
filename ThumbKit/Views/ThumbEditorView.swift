@@ -68,7 +68,7 @@ struct ThumbEditorView: View {
 
     private var topBar: some View {
         HStack(spacing: Studio.Space.s) {
-            StudioIconButton("chevron.left", help: "All designs  ⌘W") { onBack() }
+            StudioIconButton("chevron.left", help: "All designs  ⇧⌘W") { onBack() }
             Rectangle()
                 .fill(Studio.Palette.separator)
                 .frame(width: Studio.Metric.hairline, height: 16)
