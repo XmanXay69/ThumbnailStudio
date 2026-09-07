@@ -2482,6 +2482,121 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Frame quality")
+do {
+    // Synthetic frames with one property varied at a time, so each component
+    // is shown to measure the thing it claims to.
+    func frame(_ draw: (NSRect) -> Void) -> CIImage? {
+        let size = NSSize(width: 320, height: 180)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        draw(NSRect(origin: .zero, size: size))
+        image.unlockFocus()
+        guard let tiff = image.tiffRepresentation else { return nil }
+        return CIImage(data: tiff)
+    }
+
+    // Sharp: hard-edged stripes. Blurred: the same, blurred.
+    let stripes = frame { rect in
+        NSColor.black.setFill(); rect.fill()
+        NSColor.white.setFill()
+        for x in stride(from: 0, to: Int(rect.width), by: 8) {
+            NSRect(x: CGFloat(x), y: 0, width: 4, height: rect.height).fill()
+        }
+    }
+    let sharp = stripes.flatMap { FrameQualityScorer.score($0) }
+    let blurred = stripes
+        .map { $0.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 6])
+                 .cropped(to: $0.extent) }
+        .flatMap { FrameQualityScorer.score($0) }
+    check("a sharp frame scores high on sharpness",
+          (sharp?.sharpness ?? 0) > 0.6, String(format: "%.2f", sharp?.sharpness ?? -1))
+    check("blurring the same frame drops sharpness",
+          (blurred?.sharpness ?? 1) < (sharp?.sharpness ?? 0) * 0.7,
+          String(format: "%.2f vs %.2f", blurred?.sharpness ?? -1, sharp?.sharpness ?? -1))
+
+    // Exposure: a dark frame and a bright one.
+    let dark = frame { rect in NSColor(calibratedWhite: 0.06, alpha: 1).setFill(); rect.fill() }
+        .flatMap { FrameQualityScorer.score($0) }
+    let bright = frame { rect in NSColor(calibratedWhite: 0.95, alpha: 1).setFill(); rect.fill() }
+        .flatMap { FrameQualityScorer.score($0) }
+    check("a dark frame reads dark", (dark?.exposure ?? 1) < 0.2,
+          String(format: "%.2f", dark?.exposure ?? -1))
+    check("a bright frame reads bright", (bright?.exposure ?? 0) > 0.8,
+          String(format: "%.2f", bright?.exposure ?? -1))
+    check("both extremes are punished by the overall score",
+          (dark?.overall ?? 1) < 0.45 && (bright?.overall ?? 1) < 0.45,
+          String(format: "%.2f / %.2f", dark?.overall ?? -1, bright?.overall ?? -1))
+
+    // Contrast: a flat grey field versus black-and-white halves.
+    let flat = frame { rect in NSColor(calibratedWhite: 0.5, alpha: 1).setFill(); rect.fill() }
+        .flatMap { FrameQualityScorer.score($0) }
+    let punchy = frame { rect in
+        NSColor.black.setFill(); rect.fill()
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: rect.width / 2, height: rect.height).fill()
+    }.flatMap { FrameQualityScorer.score($0) }
+    check("a flat field has no contrast", (flat?.contrast ?? 1) < 0.05,
+          String(format: "%.2f", flat?.contrast ?? -1))
+    check("split black and white has full contrast", (punchy?.contrast ?? 0) > 0.9,
+          String(format: "%.2f", punchy?.contrast ?? -1))
+
+    // No face is not a crash, and the explanation says so.
+    check("a frame with no face reports none",
+          (flat?.faceCount ?? -1) == 0 && (flat?.faceArea ?? 1) == 0)
+    check("the explanation names the problems",
+          (flat?.explanation ?? "").contains("no face")
+              && (flat?.explanation ?? "").contains("flat contrast"))
+
+    // The weighting is a stated opinion, but it must at least be monotone in
+    // the thing it claims to weigh most.
+    var withFace = FrameQuality()
+    withFace.sharpness = 0.8; withFace.contrast = 0.7; withFace.exposure = 0.5
+    var withoutFace = withFace
+    withFace.faceCount = 1; withFace.faceArea = 0.14
+    withFace.facePlacement = 0.9; withFace.eyesOpen = 0.9
+    check("a big open-eyed face outranks the same frame without one",
+          withFace.overall > withoutFace.overall + 0.2,
+          String(format: "%.2f vs %.2f", withFace.overall, withoutFace.overall))
+    var eyesShut = withFace
+    eyesShut.eyesOpen = 0.0
+    check("closed eyes cost a frame its lead", eyesShut.overall < withFace.overall,
+          String(format: "%.2f vs %.2f", eyesShut.overall, withFace.overall))
+}
+
+section("Frame sampling")
+do {
+    // One moment, five samples, 1.2s either side.
+    let one = FrameSampling.times(around: [10], spread: 1.2, samplesPerMoment: 5)
+    check("a moment yields the requested number of samples", one.count == 5, "\(one.count)")
+    check("they span the full window either side",
+          abs((one.first ?? 0) - 8.8) < 0.001 && abs((one.last ?? 0) - 11.2) < 0.001,
+          "\(one.first ?? -1)…\(one.last ?? -1)")
+    check("they are evenly spaced and sorted",
+          abs((one[1] - one[0]) - 0.6) < 0.001 && one == one.sorted())
+    check("the moment itself is sampled", one.contains { abs($0 - 10) < 0.001 })
+
+    // Overlapping moments must not extract the same instant twice — the whole
+    // reason frame filenames carry milliseconds now.
+    let overlapping = FrameSampling.times(around: [10, 10.6], spread: 1.2, samplesPerMoment: 5)
+    check("overlapping moments do not duplicate instants",
+          overlapping.count == Set(overlapping).count, "\(overlapping.count) unique")
+    check("and the union is smaller than the naive product",
+          overlapping.count < 10, "\(overlapping.count) of 10")
+
+    // A moment near zero must not ask ffmpeg for a negative timestamp.
+    let earliest = FrameSampling.times(around: [0.3], spread: 1.2, samplesPerMoment: 5)
+    check("sampling never goes before the start of the video",
+          (earliest.first ?? -1) >= 0, "\(earliest.first ?? -1)")
+
+    // Degenerate inputs return nothing rather than crashing.
+    check("no moments means no work", FrameSampling.times(around: []).isEmpty)
+    check("zero samples means no work",
+          FrameSampling.times(around: [5], samplesPerMoment: 0).isEmpty)
+    check("a single sample lands exactly on the moment",
+          FrameSampling.times(around: [7], samplesPerMoment: 1) == [7])
+}
+
 section("Small-size legibility")
 do {
     func doc(sizeFraction: Double, x: Double = 0.5, y: Double = 0.5) -> ThumbDocument {

@@ -66,6 +66,7 @@ swiftc -O -o "$BIN" \
   ThumbKit/Models/ThumbEditing.swift \
   ThumbKit/Models/CanvasGeometry.swift \
   ThumbKit/Models/ThumbLegibility.swift \
+  ThumbKit/Services/FrameQuality.swift \
   ThumbKit/Core/HexColor.swift \
   ThumbKit/Core/EditingPrimitives.swift \
   ThumbKit/Services/ThumbnailRenderer.swift \
