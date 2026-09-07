@@ -12,6 +12,9 @@ protocol ThumbEditorActions: AnyObject {
     var selectionIsLocked: Bool { get }
     var selectionIsHidden: Bool { get }
     var canPasteNow: Bool { get }
+    /// False when there is nothing to cycle, so Tab can fall through to
+    /// AppKit's own focus navigation instead of vanishing.
+    var canCycleSelection: Bool { get }
 
     func deleteSelection()
     func nudgeSelection(dx: Double, dy: Double)
@@ -254,6 +257,8 @@ final class ThumbKeyRouter: ObservableObject {
             return true
 
         case KeyCode.tab:
+            // With nothing to cycle, Tab belongs to AppKit's focus chain.
+            guard actions.canCycleSelection else { return false }
             actions.cycleSelection(forward: !flags.contains(.shift))
             return true
 

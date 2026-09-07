@@ -240,23 +240,25 @@ extension ThumbnailStudioPane {
             }
     }
 
-    /// A layer's drawn height fraction — text and images derive it.
+    /// A layer's drawn height, straight from the renderer — the selection box
+    /// and the thing on screen are then the same rectangle by construction.
     func layerHeightFraction(_ layer: ThumbLayer, width: Double?) -> Double {
-        let widthFraction = width ?? layer.widthFraction
-        switch layer.kind {
-        case .shape:
-            return layer.heightFraction * (width.map { $0 / max(0.01, layer.widthFraction) } ?? 1)
-        case .text(let spec):
-            return max(spec.sizeFraction * 1.2, 0.08)
-        case .image(let spec):
-            // Cached: this runs for every layer on every canvas repaint, and
-            // decoding a 4K PNG off disk inside a ForEach body is how a
-            // smooth drag turns into a slideshow.
-            guard let aspect = ImageAspectCache.shared.aspect(of: spec.effectivePath) else {
-                return layer.heightFraction
-            }
-            return widthFraction * aspect * Double(doc.width) / Double(doc.height)
+        var measured = layer
+        if let width {
+            measured.heightFraction = layer.heightFraction * width
+                / max(0.01, layer.widthFraction)
+            measured.widthFraction = width
         }
+        return ThumbnailRenderer.drawnHeightFraction(
+            measured,
+            in: CGSize(width: Double(doc.width), height: Double(doc.height)),
+            provider: { spec in
+                // Only the size matters here, so a cached 1x1 stand-in of the
+                // right aspect is enough and keeps the file off the main thread.
+                guard let aspect = ImageAspectCache.shared.aspect(of: spec.effectivePath)
+                else { return nil }
+                return NSImage(size: NSSize(width: 1000, height: 1000 * aspect))
+            })
     }
 }
 

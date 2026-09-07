@@ -2772,13 +2772,27 @@ do {
                                                  withIntermediateDirectories: true)
         try? JSONEncoder().encode(referencing).write(to: designURL, options: .atomic)
 
+        // A file written moments ago may still be live in a running app's
+        // undo stack, so pruning only considers files older than a day.
         ThumbAssets.pruneUnreferenced()
-        check("pruning keeps an asset a design still points at",
+        check("pruning spares a freshly written asset even if nothing names it",
+              FileManager.default.fileExists(atPath: drop.path))
+
+        func age(_ url: URL) {
+            try? FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(-172_800)],
+                ofItemAtPath: url.path)
+        }
+        age(keep)
+        age(drop)
+        ThumbAssets.pruneUnreferenced()
+        check("pruning keeps an old asset a design still points at",
               FileManager.default.fileExists(atPath: keep.path))
-        check("pruning removes an asset nothing points at",
+        check("pruning removes an old asset nothing points at",
               !FileManager.default.fileExists(atPath: drop.path))
 
         try? FileManager.default.removeItem(at: designURL)
+        age(keep)
         ThumbAssets.pruneUnreferenced()
         check("once the design is gone, so is its asset",
               !FileManager.default.fileExists(atPath: keep.path))

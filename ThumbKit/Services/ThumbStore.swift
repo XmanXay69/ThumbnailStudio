@@ -48,6 +48,10 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     /// Set when the file this store represents has gone. Writes stop rather
     /// than recreating it.
     private var isDetached = false
+    private var detachedMessage: String { Self.detachedMessage }
+    static let detachedMessage =
+        "This design was renamed or deleted in another window — edits here aren't being saved."
+
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -75,8 +79,7 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
             // would resurrect it at the old path — undoing a delete the user
             // confirmed, or forking the work under two names after a rename.
             isDetached = true
-            thumbStudioError = "This design was renamed or deleted in another window. "
-                + "Editing here won't be saved."
+            thumbStudioError = Self.detachedMessage
             return
         }
         guard let known = knownModified, onDisk > known else {
@@ -160,6 +163,7 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     }
 
     func applyThumbDoc(_ document: ThumbDocument, action: String?) {
+        thumbStudioError = isDetached ? detachedMessage : nil
         let previous = thumbDoc
         if let action, previous != document {
             if !UndoCoalescing.shouldCoalesce(action: action, lastAction: lastUndoAction,

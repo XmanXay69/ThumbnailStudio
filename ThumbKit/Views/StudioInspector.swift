@@ -56,7 +56,7 @@ extension ThumbnailStudioPane {
                 StudioRow("Background") {
                     HStack(spacing: Studio.Space.xs) {
                         StudioColorWell(hex: Binding(
-                            get: { doc.backgroundHex ?? "0E0E0E" },
+                            get: { doc.backgroundHex ?? ThumbDocument.defaultBackgroundHex },
                             set: { value in
                                 var document = doc
                                 document.backgroundHex = value

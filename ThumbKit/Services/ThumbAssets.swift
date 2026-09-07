@@ -81,8 +81,16 @@ enum ThumbAssets {
             harvest(url)
         }
 
+        // A file no *saved* document names may still be live: an undo entry
+        // in a running app points at the cutout it is about to restore, and
+        // the layer clipboard points at whatever you last copied. Anything
+        // touched in the last day stays.
+        let cutoff = Date().addingTimeInterval(-86_400)
         var removed = 0
         for file in files where !referenced.contains(file.path) {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            guard modified < cutoff else { continue }
             if (try? fm.removeItem(at: file)) != nil { removed += 1 }
         }
         return removed

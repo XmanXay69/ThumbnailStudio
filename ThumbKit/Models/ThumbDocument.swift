@@ -7,8 +7,11 @@ import Foundation
 struct ThumbDocument: Codable, Equatable {
     var width: Int = 1280
     var height: Int = 720
-    /// Canvas fill under every layer. nil keeps the old black.
+    /// Canvas fill under every layer. nil means the studio's own default,
+    /// which the inspector's swatch also shows — so the swatch never
+    /// misreports what the renderer paints.
     var backgroundHex: String?
+    static let defaultBackgroundHex = "141414"
     var layers: [ThumbLayer] = []
 
     init() {}

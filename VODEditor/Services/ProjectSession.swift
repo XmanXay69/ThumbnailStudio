@@ -1014,6 +1014,7 @@ final class ProjectSession: ObservableObject {
     }
 
     func applyThumbDoc(_ document: ThumbDocument, action: String? = nil) {
+        thumbStudioError = nil
         let previous = thumbDoc
         if let action, previous != document {
             if !UndoCoalescing.shouldCoalesce(action: action, lastAction: lastUndoAction,

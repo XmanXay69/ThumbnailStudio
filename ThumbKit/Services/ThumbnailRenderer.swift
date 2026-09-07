@@ -45,11 +45,8 @@ enum ThumbnailRenderer {
 
         // Canvas base: the document's colour, or dark so an empty document
         // previews sensibly.
-        if let hex = document.backgroundHex {
-            HexColor.color(hex: hex).setFill()
-        } else {
-            NSColor(calibratedWhite: 0.08, alpha: 1).setFill()
-        }
+        HexColor.color(hex: document.backgroundHex ?? ThumbDocument.defaultBackgroundHex)
+            .setFill()
         NSRect(x: 0, y: 0, width: width, height: height).fill()
 
         let size = CGSize(width: CGFloat(width), height: CGFloat(height))
@@ -73,6 +70,38 @@ enum ThumbnailRenderer {
         let image = NSImage(size: rep.size)
         image.addRepresentation(rep)
         return image
+    }
+
+    /// The height a layer actually draws at, as a fraction of the canvas.
+    /// Text measures its wrapped bounds; an image follows its *cropped*
+    /// aspect. The canvas draws its selection box from this, so a five-line
+    /// headline is selectable over all five lines and a cropped photo's
+    /// handle sits on the photo rather than below it.
+    static func drawnHeightFraction(_ layer: ThumbLayer, in size: CGSize,
+                                    provider: ImageProvider) -> Double {
+        switch layer.kind {
+        case .shape:
+            return layer.heightFraction
+        case .text(let spec):
+            guard !spec.text.isEmpty, size.height > 0 else { return layer.heightFraction }
+            let width = layer.widthFraction * size.width
+            let measured = NSAttributedString(
+                string: spec.text,
+                attributes: textAttributes(spec, canvasHeight: size.height, strokePass: false))
+                .boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                              options: [.usesLineFragmentOrigin])
+            return Double((ceil(measured.height) + 4) / size.height)
+        case .image(let spec):
+            guard let image = provider(spec), image.size.width > 0 else {
+                return layer.heightFraction
+            }
+            let crop = spec.crop?.clamped()
+            let sourceW = image.size.width * CGFloat(crop.map(\.width) ?? 1)
+            let sourceH = image.size.height * CGFloat(crop.map(\.height) ?? 1)
+            guard sourceW > 0 else { return layer.heightFraction }
+            let drawn = layer.widthFraction * size.width * Double(sourceH / sourceW)
+            return drawn / Double(size.height)
+        }
     }
 
     static func blendMode(_ name: String) -> CGBlendMode {
@@ -155,6 +184,39 @@ enum ThumbnailRenderer {
         // over the subject instead of behind it.
         if spec.strokeWidth > 0.5, spec.useCutout,
            let tinted = tintedSilhouette(image, color: HexColor.color(hex: spec.strokeHex)) {
+            // An outlined cutout can still be framed and cut — the inspector
+            // offers both, and the crop sheet previews the slant.
+            let outlineCut = cutPath(edge: spec.cutEdge, amount: spec.cutAmount,
+                                     flip: spec.cutFlip, in: rect)
+            let outlineMask: NSBezierPath? = {
+                switch spec.maskShape {
+                case "rounded":
+                    return NSBezierPath(roundedRect: rect, xRadius: spec.maskCornerRadius,
+                                        yRadius: spec.maskCornerRadius)
+                case "circle":
+                    let side = min(rect.width, rect.height)
+                    return NSBezierPath(ovalIn: NSRect(x: rect.midX - side / 2,
+                                                       y: rect.midY - side / 2,
+                                                       width: side, height: side))
+                default:
+                    return nil
+                }
+            }()
+            if outlineCut != nil || outlineMask != nil {
+                cg?.saveGState()
+                outlineMask?.addClip()
+                outlineCut?.addClip()
+            }
+            defer {
+                if outlineCut != nil || outlineMask != nil {
+                    cg?.restoreGState()
+                    if spec.borderWidth > 0.1, let edge = outlineMask ?? outlineCut {
+                        HexColor.color(hex: spec.borderHex).setStroke()
+                        edge.lineWidth = spec.borderWidth
+                        edge.stroke()
+                    }
+                }
+            }
             if spec.shadowEnabled {
                 cg?.setShadow(offset: CGSize(width: spec.shadowOffset, height: -spec.shadowOffset),
                               blur: spec.shadowBlur,

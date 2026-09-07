@@ -98,6 +98,13 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .onChange(of: store.thumbDoc) { _, document in
             ThumbKeyRouter.shared.canvasWidth = document.width
             ThumbKeyRouter.shared.canvasHeight = document.height
+            // Undo, an external reload and a cutout landing all change the
+            // document without going through the model, so a selection can
+            // outlive its layers and leave the menus enabled over nothing.
+            let live = Set(document.layers.map(\.id))
+            let pruned = editor.selection.intersection(live)
+            if pruned != editor.selection { editor.selection = pruned }
+            ThumbKeyRouter.shared.refresh()
             rerender()
         }
         .sheet(isPresented: Binding(

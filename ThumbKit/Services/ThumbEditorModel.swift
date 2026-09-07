@@ -58,6 +58,7 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
         !selectedLayers.isEmpty && selectedLayers.allSatisfy { !$0.isVisible }
     }
     var canPasteNow: Bool { ThumbLayerClipboard.canPaste() }
+    var canCycleSelection: Bool { doc.layers.count > 1 }
 
     // MARK: Verbs — each is exactly one applyThumbDoc, i.e. one undo step
 
