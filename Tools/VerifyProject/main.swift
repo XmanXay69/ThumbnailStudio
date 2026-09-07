@@ -2516,6 +2516,36 @@ do {
     check("text under the duration stamp is flagged",
           stamped.layersUnderDurationStamp == 1)
 
+    // Overlap is measured against the GLYPHS, not the layout box. A centred
+    // headline's wrap width is far wider than its ink, so testing the box
+    // reports collisions the reader never sees.
+    //
+    // The real geometry from the user's own design, which is a true positive
+    // and was verified by measurement: 14 characters at 0.16 of canvas height
+    // measure 898 px, so centred they span x 0.149…0.851 and y 0.688…0.882 —
+    // genuinely clipping the stamp zone's top-left corner at (0.800, 0.855).
+    var headline = ThumbDocument()
+    headline.width = 1280; headline.height = 720
+    var wide = TextSpec(text: "Doomsday Heist")
+    wide.sizeFraction = 0.16
+    headline.layers = [ThumbLayer(kind: .text(wide), x: 0.5, y: 0.785, widthFraction: 0.85)]
+    check("a headline whose ink reaches the stamp is flagged",
+          ThumbLegibility.report(for: headline).layersUnderDurationStamp == 1)
+
+    // Short centred text in the same wide box does NOT reach it — this is the
+    // case that measuring the layout box would get wrong.
+    var shortWord = headline
+    var brief = wide
+    brief.text = "HI"
+    shortWord.layers[0].kind = .text(brief)
+    check("short centred text in a wide box is not falsely flagged",
+          ThumbLegibility.report(for: shortWord).layersUnderDurationStamp == 0)
+
+    // And the ink measurement is doing the work: the layout box is unchanged
+    // between those two, so a box-based test would flag both identically.
+    check("the two differ only by their ink, not their layout box",
+          headline.layers[0].widthFraction == shortWord.layers[0].widthFraction)
+
     // A hidden layer is not a legibility problem.
     var hiddenDoc = doc(sizeFraction: 0.02)
     hiddenDoc.layers[0].isVisible = false

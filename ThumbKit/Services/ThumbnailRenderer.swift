@@ -104,6 +104,37 @@ enum ThumbnailRenderer {
         }
     }
 
+    /// The rectangle a layer actually occupies on the canvas, in fractions —
+    /// centre-relative, matching how layers are positioned.
+    ///
+    /// For text this is the MEASURED glyph box, not the wrap width. A centred
+    /// headline with a 0.85 wrap width may only paint 0.4 of the canvas, and
+    /// anything reasoning about overlap (does this collide with YouTube's
+    /// duration stamp?) has to use the ink, not the text box, or it cries wolf.
+    static func drawnBounds(_ layer: ThumbLayer, in size: CGSize,
+                            provider: ImageProvider) -> CGRect {
+        let height = drawnHeightFraction(layer, in: size, provider: provider)
+        var width = layer.widthFraction
+
+        if case .text(let spec) = layer.kind,
+           !spec.text.isEmpty, size.width > 0 {
+            let wrap = layer.widthFraction * size.width
+            let measured = NSAttributedString(
+                string: spec.text,
+                attributes: textAttributes(spec, canvasHeight: size.height, strokePass: false))
+                .boundingRect(with: NSSize(width: wrap, height: .greatestFiniteMagnitude),
+                              options: [.usesLineFragmentOrigin])
+            // Centred text paints around the layer centre; left/right-aligned
+            // text can sit anywhere inside the wrap box, so stay conservative
+            // and keep the full width for those.
+            if spec.alignment == "center" {
+                width = min(layer.widthFraction, Double(measured.width) / Double(size.width))
+            }
+        }
+        return CGRect(x: layer.x - width / 2, y: layer.y - height / 2,
+                      width: width, height: height)
+    }
+
     static func blendMode(_ name: String) -> CGBlendMode {
         switch name {
         case "multiply": return .multiply

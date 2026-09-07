@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Will the text still be readable when the thumbnail is small?
@@ -46,14 +47,15 @@ enum ThumbLegibility {
             smallest = min(smallest ?? capHeight, capHeight)
 
             // The duration stamp sits in the lower right and covers whatever
-            // is under it.
-            let halfWidth = layer.widthFraction / 2
-            let halfHeight = max(spec.sizeFraction * 1.2, 0.08) / 2
-            let overlapsX = (layer.x + halfWidth) > zone.x
-                && (layer.x - halfWidth) < (zone.x + zone.width)
-            let overlapsY = (layer.y + halfHeight) > zone.y
-                && (layer.y - halfHeight) < (zone.y + zone.height)
-            if overlapsX && overlapsY { stamped += 1 }
+            // is under it. Measured against the glyphs, not the wrap box: a
+            // centred headline's layout box is far wider than its ink, and
+            // testing the box reports a collision that is not there.
+            let ink = ThumbnailRenderer.drawnBounds(
+                layer,
+                in: CGSize(width: Double(document.width), height: Double(document.height)),
+                provider: { _ in nil })
+            let stamp = CGRect(x: zone.x, y: zone.y, width: zone.width, height: zone.height)
+            if ink.intersects(stamp) { stamped += 1 }
         }
 
         return Report(smallestTextPixels: smallest,
