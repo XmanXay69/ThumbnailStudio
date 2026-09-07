@@ -69,6 +69,19 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Grading a frame
+
+Thirteen adjustments, in the order a photo editor applies them: exposure and
+white balance first, then highlights and shadows to recover the ends of the
+range, then the grade, then sharpen and denoise, then vignette, then a look.
+Highlights and shadows are the two that matter most on a gameplay grab — a
+blown sky or a crushed night scene is usually recoverable.
+
+All of it is non-destructive: the adjustments live on the layer, the source
+file is never touched, and every slider has a reset. Each one renders through
+the same `AdjustedImageCache` the canvas and the export share, so what you
+grade is what ships.
+
 ### Typing numbers
 
 The canvas takes any size from 64 to 8192 a side, not just the four presets —

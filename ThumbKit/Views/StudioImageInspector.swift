@@ -58,25 +58,77 @@ extension ThumbnailStudioPane {
             StudioDivider()
             StudioSection("Adjustments", symbol: "dial.medium",
                           isExpanded: expansion("adjustments")) {
-                ForEach([("Brightness", \ImageSpec.brightness),
-                         ("Contrast", \ImageSpec.contrast),
-                         ("Saturation", \ImageSpec.saturation),
-                         ("Exposure", \ImageSpec.exposure),
-                         ("Vibrance", \ImageSpec.vibrance)], id: \.0) { name, path in
-                    StudioRow(name) {
-                        StudioValueSlider(value: Binding(
-                            get: { spec[keyPath: path] },
-                            set: { value in mutateImage(id, name) { $0[keyPath: path] = value } }
-                        ), in: -1...1) { String(format: "%+.2f", $0) }
+                adjustmentRow("Exposure", id, spec, \.exposure)
+                adjustmentRow("Brightness", id, spec, \.brightness)
+                adjustmentRow("Contrast", id, spec, \.contrast)
+                adjustmentRow("Highlights", id, spec, \.highlights,
+                              help: "Pull detail back out of a blown sky or a muzzle flash")
+                adjustmentRow("Shadows", id, spec, \.shadows,
+                              help: "Lift crushed blacks so a dark frame still reads")
+                StudioDivider()
+                adjustmentRow("Saturation", id, spec, \.saturation)
+                adjustmentRow("Vibrance", id, spec, \.vibrance,
+                              help: "Saturation that leaves already-vivid colours alone")
+                adjustmentRow("Temperature", id, spec, \.temperature,
+                              help: "Warmer or cooler")
+                adjustmentRow("Tint", id, spec, \.tint, help: "Green or magenta")
+                adjustmentRow("Hue", id, spec, \.hue, range: -180...180,
+                              format: { String(format: "%.0f°", $0) })
+                StudioDivider()
+                adjustmentRow("Sharpen", id, spec, \.sharpness, range: 0...1,
+                              help: "A frame grab is usually a little soft")
+                adjustmentRow("Denoise", id, spec, \.noiseReduction, range: 0...1,
+                              help: "Smooths compression noise; costs fine detail")
+                adjustmentRow("Vignette", id, spec, \.vignette, range: 0...1,
+                              help: "Darkens the corners, pushing the subject forward")
+                if spec.hasAdjustments {
+                    Button("Reset adjustments") {
+                        mutateImage(id, "Reset Adjustments") { current in
+                            let keep = current.filterPreset
+                            var cleared = current
+                            cleared.brightness = 0; cleared.contrast = 0
+                            cleared.saturation = 0; cleared.exposure = 0
+                            cleared.vibrance = 0; cleared.highlights = 0
+                            cleared.shadows = 0; cleared.temperature = 0
+                            cleared.tint = 0; cleared.sharpness = 0
+                            cleared.noiseReduction = 0; cleared.vignette = 0
+                            cleared.hue = 0; cleared.filterPreset = keep
+                            current = cleared
+                        }
                     }
+                    .buttonStyle(.studio(.ghost, .small, fullWidth: true))
                 }
                 StudioRow("Filter") {
                     StudioSegmented(selection: imageBinding(id, spec, \.filterPreset,
                                                            "Filter Preset"),
                                     options: [("none", "None"), ("mono", "Mono"),
                                               ("chrome", "Chrome"), ("fade", "Fade"),
-                                              ("noir", "Noir")])
+                                              ("instant", "Instant"), ("noir", "Noir")])
                 }
+            }
+        }
+    }
+
+    /// One adjustment: a slider, a live number, and a click-to-reset label.
+    /// Every adjustment goes through here so they cannot drift apart.
+    @ViewBuilder
+    private func adjustmentRow(_ label: String, _ id: UUID, _ spec: ImageSpec,
+                               _ path: WritableKeyPath<ImageSpec, Double>,
+                               range: ClosedRange<Double> = -1...1,
+                               help: String? = nil,
+                               format: ((Double) -> String)? = nil) -> some View {
+        StudioRow(label, help: help) {
+            HStack(spacing: Studio.Space.xs) {
+                StudioValueSlider(
+                    value: imageBinding(id, spec, path, label),
+                    in: range,
+                    format: format ?? { String(format: "%+.2f", $0) })
+                StudioIconButton("arrow.counterclockwise", help: "Reset \(label)",
+                                 size: .small) {
+                    mutateImage(id, "Reset \(label)") { $0[keyPath: path] = 0 }
+                }
+                .opacity(abs(spec[keyPath: path]) > 0.001 ? 1 : 0.25)
+                .disabled(abs(spec[keyPath: path]) <= 0.001)
             }
         }
     }

@@ -202,6 +202,22 @@ struct ImageSpec: Codable, Equatable {
     var saturation: Double = 0
     var exposure: Double = 0
     var vibrance: Double = 0
+    /// Recover blown skies and lift crushed shadows independently, which is
+    /// most of what a gameplay grab needs. 0…1 each.
+    var highlights: Double = 0
+    var shadows: Double = 0
+    /// White balance, zero-centred. Warm/cool and green/magenta.
+    var temperature: Double = 0
+    var tint: Double = 0
+    /// Unsharp mask amount, and its inverse. A frame grab is usually a little
+    /// soft; a compressed one is usually a little noisy.
+    var sharpness: Double = 0
+    var noiseReduction: Double = 0
+    /// Darkens the corners, which is how you push a face forward without
+    /// touching the face.
+    var vignette: Double = 0
+    /// Rotates every hue, in degrees. Cheap way to recolour a UI element.
+    var hue: Double = 0
     /// "none", "mono", "chrome", "fade", "instant", "noir".
     var filterPreset: String = "none"
     /// Optional crop, fractions of the source image.
@@ -246,6 +262,14 @@ struct ImageSpec: Codable, Equatable {
         saturation = value(.saturation, 0)
         exposure = value(.exposure, 0)
         vibrance = value(.vibrance, 0)
+        highlights = value(.highlights, 0)
+        shadows = value(.shadows, 0)
+        temperature = value(.temperature, 0)
+        tint = value(.tint, 0)
+        sharpness = value(.sharpness, 0)
+        noiseReduction = value(.noiseReduction, 0)
+        vignette = value(.vignette, 0)
+        hue = value(.hue, 0)
         filterPreset = value(.filterPreset, "none")
         crop = try? container.decodeIfPresent(NormalizedRect.self, forKey: .crop)
         cutEdge = value(.cutEdge, "none")
@@ -263,10 +287,23 @@ struct ImageSpec: Codable, Equatable {
         strokeHex = value(.strokeHex, "FFFFFF")
     }
 
+    /// Whether any adjustment is doing anything.
+    ///
+    /// Derived from the values rather than hand-listed: the previous version
+    /// enumerated fields by name, which meant every adjustment added here had
+    /// to be remembered in two other places or it silently did nothing.
     var hasAdjustments: Bool {
-        abs(brightness) > 0.001 || abs(contrast) > 0.001 || abs(saturation) > 0.001
-            || abs(exposure) > 0.001 || abs(vibrance) > 0.001 || filterPreset != "none"
+        adjustmentValues.contains { abs($0) > 0.001 } || filterPreset != "none"
     }
+
+    /// Every zero-centred adjustment, in one list, so the cache key and the
+    /// "is anything on?" test can never drift from the filters themselves.
+    var adjustmentValues: [Double] {
+        [brightness, contrast, saturation, exposure, vibrance,
+         highlights, shadows, temperature, tint,
+         sharpness, noiseReduction, vignette, hue]
+    }
+
     var effectivePath: String { useCutout ? (cutoutPath ?? path) : path }
 }
 

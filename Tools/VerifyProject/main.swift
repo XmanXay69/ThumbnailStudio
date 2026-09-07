@@ -2482,6 +2482,80 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Image adjustments, the full set")
+do {
+    // A mid grey with a colour cast, so every adjustment has something to move.
+    let source = NSImage(size: NSSize(width: 48, height: 48))
+    source.lockFocus()
+    NSColor(calibratedRed: 0.55, green: 0.45, blue: 0.40, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: 48, height: 48).fill()
+    source.unlockFocus()
+
+    func middle(_ spec: ImageSpec) -> NSColor? {
+        guard let image = AdjustedImageCache.adjusted(source, spec: spec),
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)
+    }
+
+    var base = ImageSpec(path: "/synthetic")
+    check("a fresh spec has no adjustments", !base.hasAdjustments)
+
+    // Every new field must (a) register as an adjustment and (b) change pixels.
+    let paths: [(String, WritableKeyPath<ImageSpec, Double>, Double)] = [
+        ("highlights", \.highlights, 0.8), ("shadows", \.shadows, 0.8),
+        ("temperature", \.temperature, 0.8), ("tint", \.tint, 0.8),
+        ("sharpness", \.sharpness, 0.9), ("noiseReduction", \.noiseReduction, 0.9),
+        ("vignette", \.vignette, 0.9), ("hue", \.hue, 90),
+    ]
+    let reference = middle(ImageSpec(path: "/synthetic"))
+    for (name, path, value) in paths {
+        var spec = ImageSpec(path: "/synthetic")
+        spec[keyPath: path] = value
+        check("\(name) counts as an adjustment", spec.hasAdjustments)
+        // Vignette and sharpen act on edges, so the centre may not move for
+        // those two; assert the render succeeds and, where it should, differs.
+        let result = middle(spec)
+        check("\(name) renders", result != nil)
+        if ["highlights", "shadows", "temperature", "tint", "hue"].contains(name) {
+            let red: Double = Double(result?.redComponent ?? 0)
+            let blue: Double = Double(result?.blueComponent ?? 0)
+            let refRed: Double = Double(reference?.redComponent ?? 0)
+            let refBlue: Double = Double(reference?.blueComponent ?? 0)
+            let moved: Double = abs(red - refRed) + abs(blue - refBlue)
+            check("\(name) actually changes the image", moved > 0.01,
+                  String(format: "%.4f", moved))
+        }
+    }
+
+    // The trap the audit flagged: the cache key used to be hand-listed, so a
+    // new adjustment silently served the pre-adjustment image forever.
+    var a = ImageSpec(path: "/same")
+    var b = ImageSpec(path: "/same")
+    a.temperature = 0.5
+    b.temperature = -0.5
+    check("the cache distinguishes specs that differ only by a new field",
+          a.adjustmentValues != b.adjustmentValues)
+    check("every adjustment field is in the list the key is built from",
+          a.adjustmentValues.count == 13, "\(a.adjustmentValues.count)")
+
+    // A filter preset alone still counts, with every slider at zero.
+    var look = ImageSpec(path: "/synthetic")
+    look.filterPreset = "noir"
+    check("a filter preset alone counts as an adjustment", look.hasAdjustments)
+    check("and it renders", middle(look) != nil)
+
+    // Blur-family filters grow the extent; the result must keep the source's
+    // size or the layer stops lining up with its selection box.
+    var grown = ImageSpec(path: "/synthetic")
+    grown.noiseReduction = 0.9
+    grown.vignette = 0.9
+    check("a blur-family chain keeps the source size",
+          AdjustedImageCache.adjusted(source, spec: grown)?.size == source.size,
+          "\(AdjustedImageCache.adjusted(source, spec: grown)?.size ?? .zero)")
+    _ = base
+}
+
 section("Custom canvas size")
 do {
     check("a sensible size passes through", ThumbDocument.clampedDimension(1600) == 1600)

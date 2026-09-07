@@ -654,26 +654,77 @@ final class AdjustedImageCache {
         originals.removeAllObjects()
     }
 
+    /// Derived from the values, not hand-listed by name. The previous key
+    /// enumerated each adjustment, so adding one here meant remembering to
+    /// add it there too — and forgetting meant the cache cheerfully served the
+    /// pre-adjustment image forever.
     private func cacheKey(_ spec: ImageSpec) -> String {
-        "\(spec.effectivePath)|\(spec.brightness)|\(spec.contrast)|\(spec.saturation)"
-            + "|\(spec.exposure)|\(spec.vibrance)|\(spec.filterPreset)"
-            + "|\(spec.crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")"
+        let values = spec.adjustmentValues
+            .map { String(format: "%.4f", $0) }
+            .joined(separator: ",")
+        let crop = spec.crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-"
+        return "\(spec.effectivePath)|\(values)|\(spec.filterPreset)|\(crop)"
     }
 
     nonisolated static func adjusted(_ image: NSImage, spec: ImageSpec) -> NSImage? {
         guard let tiff = image.tiffRepresentation, var ci = CIImage(data: tiff) else { return nil }
-        if abs(spec.brightness) > 0.001 || abs(spec.contrast) > 0.001 || abs(spec.saturation) > 0.001 {
+        let extent = ci.extent
+
+        // Order matters, and it is the order a photo editor uses: get the
+        // exposure and white balance right, recover the ends of the range,
+        // then grade, then sharpen, then vignette, then apply a look.
+        if abs(spec.exposure) > 0.001 {
+            ci = ci.applyingFilter("CIExposureAdjust", parameters: ["inputEV": spec.exposure * 2])
+        }
+        if abs(spec.temperature) > 0.001 || abs(spec.tint) > 0.001 {
+            // Neutral is 6500K; the slider moves +/- 3000K and +/- 100 tint.
+            ci = ci.applyingFilter("CITemperatureAndTint", parameters: [
+                "inputNeutral": CIVector(x: 6500 + spec.temperature * 3000,
+                                         y: spec.tint * 100),
+                "inputTargetNeutral": CIVector(x: 6500, y: 0),
+            ])
+        }
+        if abs(spec.highlights) > 0.001 || abs(spec.shadows) > 0.001 {
+            // Apple's filter takes highlights 0…1 where 1 is untouched, and
+            // shadows -1…1 where 0 is untouched. The sliders are both
+            // zero-centred, so map them.
+            ci = ci.applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": 1 - max(0, spec.highlights),
+                "inputShadowAmount": spec.shadows,
+            ])
+        }
+        if abs(spec.brightness) > 0.001 || abs(spec.contrast) > 0.001
+            || abs(spec.saturation) > 0.001 {
             ci = ci.applyingFilter("CIColorControls", parameters: [
                 "inputBrightness": spec.brightness * 0.5,
                 "inputContrast": 1 + spec.contrast * 0.6,
                 "inputSaturation": 1 + spec.saturation,
             ])
         }
-        if abs(spec.exposure) > 0.001 {
-            ci = ci.applyingFilter("CIExposureAdjust", parameters: ["inputEV": spec.exposure * 2])
-        }
         if abs(spec.vibrance) > 0.001 {
             ci = ci.applyingFilter("CIVibrance", parameters: ["inputAmount": spec.vibrance])
+        }
+        if abs(spec.hue) > 0.001 {
+            ci = ci.applyingFilter("CIHueAdjust",
+                                   parameters: ["inputAngle": spec.hue * .pi / 180])
+        }
+        if spec.noiseReduction > 0.001 {
+            ci = ci.applyingFilter("CINoiseReduction", parameters: [
+                "inputNoiseLevel": spec.noiseReduction * 0.05,
+                "inputSharpness": 0.4,
+            ])
+        }
+        if spec.sharpness > 0.001 {
+            ci = ci.applyingFilter("CIUnsharpMask", parameters: [
+                "inputRadius": 2.0,
+                "inputIntensity": spec.sharpness,
+            ])
+        }
+        if spec.vignette > 0.001 {
+            ci = ci.applyingFilter("CIVignette", parameters: [
+                "inputIntensity": spec.vignette * 2,
+                "inputRadius": 1.5,
+            ])
         }
         let presets = ["mono": "CIPhotoEffectMono", "chrome": "CIPhotoEffectChrome",
                        "fade": "CIPhotoEffectFade", "instant": "CIPhotoEffectInstant",
@@ -681,13 +732,16 @@ final class AdjustedImageCache {
         if let filterName = presets[spec.filterPreset] {
             ci = ci.applyingFilter(filterName)
         }
+        // Blur-family filters grow the extent and shift the origin; crop back
+        // so the layer still lines up with where the canvas thinks it is.
+        ci = ci.cropped(to: extent)
+
         // Flattened, not wrapped. An NSImage backed by NSCIImageRep is lazy:
         // the whole Core Image chain re-runs at full resolution on every
         // single draw, so the cache above was caching a promise to redo the
         // work rather than the work. Rasterising once here costs one pass and
         // makes every subsequent render of that layer a plain blit.
         // Measured on a 3840x2160 source: 58.2 ms/render before, 15.6 after.
-        let extent = ci.extent
         guard extent.width > 0, extent.height > 0, extent.width.isFinite,
               extent.height.isFinite,
               let cg = sharedContext.createCGImage(ci, from: extent) else {
