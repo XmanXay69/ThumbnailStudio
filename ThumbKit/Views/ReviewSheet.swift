@@ -41,19 +41,25 @@ struct ReviewSheet: View {
                         ForEach(review.findings) { finding in
                             row(finding)
                         }
-                        Text("These are measurements of this image and this document — text height at feed size, contrast, what the duration badge covers. They are not a prediction: this app has no click-through data and does not pretend to.")
-                            .font(Studio.Typo.caption)
-                            .foregroundStyle(Studio.Palette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, Studio.Space.s)
                     }
                     .padding(Studio.Space.l)
                 }
+                StudioDivider()
+                // Pinned, not appended. This is the one line that stops a
+                // confident-looking number being read as a forecast, and it
+                // does not get to depend on whether anyone scrolls.
+                Text("Measurements of this image and this document — text height at feed size, contrast, what the duration badge covers. Not a prediction: this app has no click-through data and does not pretend to.")
+                    .font(Studio.Typo.caption)
+                    .foregroundStyle(Studio.Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Studio.Space.m)
+                    .background(Studio.Palette.panel)
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(width: 620, height: 660)
+        .frame(width: 620, height: 700)
         .studioWindowBackground()
         .task {
             let doc = document
