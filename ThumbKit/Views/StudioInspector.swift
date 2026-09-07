@@ -45,12 +45,32 @@ extension ThumbnailStudioPane {
     private var documentSection: some View {
         VStack(alignment: .leading, spacing: Studio.Space.s) {
             StudioSection("Canvas", symbol: "rectangle", isExpanded: expansion("canvas")) {
-                StudioRow("Size") {
+                StudioRow("Preset") {
                     StudioSizeMenu(document: doc) { width, height in
                         var document = doc
                         document.width = width
                         document.height = height
                         apply(document, "Canvas Size")
+                    }
+                }
+                // Any size, not just the four presets. A banner, a Discord
+                // header, whatever the platform of the month wants.
+                StudioRow("Size") {
+                    HStack(spacing: Studio.Space.xs) {
+                        StudioNumberField(value: Binding(
+                            get: { Double(doc.width) },
+                            set: { value in
+                                var document = doc
+                                document.width = ThumbDocument.clampedDimension(value)
+                                apply(document, "Canvas Size")
+                            }), in: 64...8192, suffix: "W")
+                        StudioNumberField(value: Binding(
+                            get: { Double(doc.height) },
+                            set: { value in
+                                var document = doc
+                                document.height = ThumbDocument.clampedDimension(value)
+                                apply(document, "Canvas Size")
+                            }), in: 64...8192, suffix: "H")
                     }
                 }
                 StudioRow("Background") {
@@ -114,15 +134,45 @@ extension ThumbnailStudioPane {
                       isExpanded: expansion("transform")) {
             StudioRow("Align") { alignRow(multiple: false) }
             StudioRow("Arrange") { arrangeRow([layer.id]) }
-            StudioRow("Size") {
-                StudioValueSlider(value: layerBinding(layer.id, \.widthFraction, "Resize Layer"),
-                                  in: 0.05...1.4) { "\(Int($0 * Double(doc.width))) px" }
-            }
-            if case .shape = layer.kind {
-                StudioRow("Height") {
-                    StudioValueSlider(value: layerBinding(layer.id, \.heightFraction, "Resize Layer"),
-                                      in: 0.02...1.4) { "\(Int($0 * Double(doc.height))) px" }
+            // Typed, in pixels. Dragging gets you close; a number gets you
+            // exactly where you meant, and lets you line two designs up.
+            StudioRow("Position") {
+                HStack(spacing: Studio.Space.xs) {
+                    StudioNumberField(value: pixelBinding(layer.id, \.x,
+                                                          span: Double(doc.width),
+                                                          action: "Move Layer"),
+                                      in: 0...Double(doc.width), suffix: "X")
+                    StudioNumberField(value: pixelBinding(layer.id, \.y,
+                                                          span: Double(doc.height),
+                                                          action: "Move Layer"),
+                                      in: 0...Double(doc.height), suffix: "Y")
                 }
+            }
+            StudioRow("Size") {
+                HStack(spacing: Studio.Space.xs) {
+                    StudioNumberField(value: pixelBinding(layer.id, \.widthFraction,
+                                                          span: Double(doc.width),
+                                                          action: "Resize Layer"),
+                                      in: 8...Double(doc.width) * 2, suffix: "W")
+                    if case .shape = layer.kind {
+                        StudioNumberField(value: pixelBinding(layer.id, \.heightFraction,
+                                                              span: Double(doc.height),
+                                                              action: "Resize Layer"),
+                                          in: 8...Double(doc.height) * 2, suffix: "H")
+                    } else {
+                        // Text and images derive their height from their
+                        // content, so it is shown rather than edited.
+                        Text("\(Int(layerHeightFraction(layer, width: nil) * Double(doc.height))) H")
+                            .font(Studio.Typo.numeric)
+                            .foregroundStyle(Studio.Palette.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .help("Height follows the content — change the size or the text")
+                    }
+                }
+            }
+            StudioRow("Scale") {
+                StudioValueSlider(value: layerBinding(layer.id, \.widthFraction, "Resize Layer"),
+                                  in: 0.05...1.4) { "\(Int($0 * 100))%" }
             }
             StudioRow("Rotation") {
                 StudioValueSlider(value: layerBinding(layer.id, \.rotationDegrees, "Rotate Layer"),
@@ -384,6 +434,22 @@ extension ThumbnailStudioPane {
 
     private static var collapsedByDefault: Set<String> {
         ["adjustments", "texteffects", "templates", "guides"]
+    }
+
+    /// A fractional layer property, edited in canvas pixels. The document
+    /// stores fractions so a design renders at any size; the inspector talks
+    /// pixels because that is what the user is looking at.
+    func pixelBinding(_ id: UUID, _ path: WritableKeyPath<ThumbLayer, Double>,
+                      span: Double, action: String) -> Binding<Double> {
+        Binding(
+            get: {
+                let layer = doc.layers.first { $0.id == id }
+                return (layer?[keyPath: path] ?? 0) * span
+            },
+            set: { pixels in
+                mutateLayer(id, action) { $0[keyPath: path] = pixels / max(1, span) }
+            }
+        )
     }
 
     // MARK: - Bindings

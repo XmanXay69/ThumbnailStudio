@@ -617,6 +617,79 @@ public struct StudioRow<Content: View>: View {
 }
 
 // =============================================================================
+// MARK: - Number field
+// =============================================================================
+
+/// A typed numeric value. Commits on Return or on losing focus, reverts on
+/// Escape, and clamps to its range — so a design tool can be driven by typing
+/// exact numbers instead of only by dragging, which is the difference between
+/// "about there" and "at 640".
+public struct StudioNumberField: View {
+    @Binding private var value: Double
+    private let range: ClosedRange<Double>
+    private let suffix: String
+    private let decimals: Int
+
+    @State private var text = ""
+    @State private var editing = false
+    @FocusState private var focused: Bool
+
+    public init(value: Binding<Double>,
+                in range: ClosedRange<Double> = -.greatestFiniteMagnitude...(.greatestFiniteMagnitude),
+                suffix: String = "",
+                decimals: Int = 0) {
+        self._value = value
+        self.range = range
+        self.suffix = suffix
+        self.decimals = decimals
+    }
+
+    private var formatted: String {
+        String(format: "%.\(decimals)f", value)
+    }
+
+    public var body: some View {
+        HStack(spacing: 2) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .font(Studio.Typo.numeric)
+                .foregroundStyle(Studio.Palette.textPrimary)
+                .multilineTextAlignment(.trailing)
+                .focused($focused)
+                .onSubmit { commit() }
+                .onExitCommand { text = formatted; focused = false }
+                .onChange(of: focused) { _, isFocused in
+                    editing = isFocused
+                    if isFocused { text = formatted } else { commit() }
+                }
+            if !suffix.isEmpty {
+                Text(suffix)
+                    .font(Studio.Typo.caption)
+                    .foregroundStyle(Studio.Palette.textTertiary)
+            }
+        }
+        .padding(.horizontal, Studio.Space.xs)
+        .frame(height: Studio.Metric.controlS)
+        .background(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous)
+            .fill(Studio.Palette.control))
+        .studioFocusRing(focused, radius: Studio.Radius.field)
+        .onAppear { text = formatted }
+        // While someone is typing, their half-finished number is the truth;
+        // any other time the document is.
+        .onChange(of: value) { _, _ in if !editing { text = formatted } }
+    }
+
+    private func commit() {
+        guard let typed = Double(text.replacingOccurrences(of: ",", with: "")) else {
+            text = formatted
+            return
+        }
+        value = min(range.upperBound, max(range.lowerBound, typed))
+        text = formatted
+    }
+}
+
+// =============================================================================
 // MARK: - Value slider (slider + scrubbable numeric readout)
 // =============================================================================
 

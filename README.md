@@ -69,6 +69,18 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Typing numbers
+
+The canvas takes any size from 64 to 8192 a side, not just the four presets —
+a banner, a Discord header, whatever the platform of the month wants. A
+selected layer gets typed X/Y and W in canvas pixels alongside the sliders,
+because dragging gets you close and a number gets you exactly where you meant.
+Height is typed for shapes and shown-but-derived for text and images, which
+take their height from their content.
+
+Fields commit on Return or when they lose focus, revert on Escape, and clamp
+rather than accepting a value the renderer cannot allocate.
+
 ### Preview at real sizes
 
 ⌘P, or the tool-rail button under Crop. A thumbnail is designed at 1280×720 and

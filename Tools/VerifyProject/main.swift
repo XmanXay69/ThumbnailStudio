@@ -2482,6 +2482,30 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Custom canvas size")
+do {
+    check("a sensible size passes through", ThumbDocument.clampedDimension(1600) == 1600)
+    check("fractional input rounds", ThumbDocument.clampedDimension(720.6) == 721)
+    check("too small is clamped up", ThumbDocument.clampedDimension(2) == 64)
+    check("absurdly large is clamped down", ThumbDocument.clampedDimension(99_999) == 8192)
+    check("negative is clamped up", ThumbDocument.clampedDimension(-500) == 64)
+    // A NaN would otherwise become a canvas the renderer cannot allocate.
+    check("NaN falls back rather than crashing the renderer",
+          ThumbDocument.clampedDimension(.nan) == 1280)
+    check("infinity falls back too", ThumbDocument.clampedDimension(.infinity) == 1280)
+
+    // A custom size must still render.
+    var odd = ThumbDocument()
+    odd.width = ThumbDocument.clampedDimension(1000)
+    odd.height = ThumbDocument.clampedDimension(1500)
+    odd.backgroundHex = "202020"
+    odd.layers = [ThumbLayer(kind: .text(TextSpec(text: "TALL")), widthFraction: 0.8)]
+    let rendered = ThumbnailRenderer.render(odd) { _ in nil }
+    check("a custom canvas renders at exactly that size",
+          rendered?.size == NSSize(width: 1000, height: 1500),
+          "\(rendered?.size ?? .zero)")
+}
+
 section("Small-size legibility")
 do {
     func doc(sizeFraction: Double, x: Double = 0.5, y: Double = 0.5) -> ThumbDocument {

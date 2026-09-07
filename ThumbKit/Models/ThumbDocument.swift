@@ -35,6 +35,15 @@ struct ThumbDocument: Codable, Equatable {
         ("Square 1080×1080", 1080, 1080),
     ]
 
+    /// Canvas dimensions the renderer can actually allocate. The upper bound
+    /// is a 8192-square bitmap — 256 MB at 4 bytes a pixel — which is already
+    /// far past anything a thumbnail needs and short of where NSBitmapImageRep
+    /// starts refusing.
+    static func clampedDimension(_ value: Double) -> Int {
+        guard value.isFinite else { return 1280 }
+        return min(8192, max(64, Int(value.rounded())))
+    }
+
     /// YouTube stamps the duration badge in the lower-right; text under it is
     /// wasted. Fractions of the canvas.
     static let durationSafeZone = (x: 0.80, y: 0.855, width: 0.19, height: 0.125)
