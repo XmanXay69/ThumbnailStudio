@@ -2556,6 +2556,200 @@ do {
     _ = base
 }
 
+section("Transparent export")
+do {
+    var doc = ThumbDocument()
+    doc.width = 64; doc.height = 64
+    doc.transparentBackground = true
+    doc.layers = [ThumbLayer(kind: .shape(ShapeSpec()), widthFraction: 0.3, heightFraction: 0.3)]
+    let rendered = ThumbnailRenderer.render(doc, provider: { _ in nil })
+    let rep = rendered?.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+    check("a transparent canvas renders", rep != nil)
+    if let image = rendered, let rep {
+    check("its corners are transparent",
+          (rep.colorAt(x: 1, y: 1)?.alphaComponent ?? 1) < 0.02,
+          String(format: "%.3f", rep.colorAt(x: 1, y: 1)?.alphaComponent ?? -1))
+    check("the shape on it is not", (rep.colorAt(x: 32, y: 32)?.alphaComponent ?? 0) > 0.9)
+
+    // The same document, opaque, must fill its corners.
+    var opaque = doc
+    opaque.transparentBackground = false
+    opaque.backgroundHex = "3366FF"
+    if let solid = ThumbnailRenderer.render(opaque, provider: { _ in nil }),
+       let solidTiff = solid.tiffRepresentation,
+       let solidRep = NSBitmapImageRep(data: solidTiff) {
+        check("an opaque canvas fills its corners",
+              (solidRep.colorAt(x: 1, y: 1)?.alphaComponent ?? 0) > 0.9
+                  && (solidRep.colorAt(x: 1, y: 1)?.blueComponent ?? 0) > 0.8)
+    } else {
+        check("an opaque canvas fills its corners", false)
+    }
+
+    // PNG carries alpha; JPEG cannot, so it must flatten rather than emit the
+    // black that an unwritten pixel would otherwise become.
+    if let png = ThumbnailRenderer.encoded(image, asPNG: true, jpegQuality: 1),
+       let decoded = NSBitmapImageRep(data: png) {
+        check("PNG keeps the alpha",
+              (decoded.colorAt(x: 1, y: 1)?.alphaComponent ?? 1) < 0.02)
+    } else {
+        check("PNG keeps the alpha", false)
+    }
+    if let jpeg = ThumbnailRenderer.encoded(image, asPNG: false, jpegQuality: 0.9),
+       let decoded = NSBitmapImageRep(data: jpeg),
+       let corner = decoded.colorAt(x: 1, y: 1) {
+        check("JPEG flattens instead of going black",
+              corner.redComponent > 0.8 && corner.greenComponent > 0.8,
+              String(format: "r %.2f g %.2f", corner.redComponent, corner.greenComponent))
+    } else {
+        check("JPEG flattens instead of going black", false)
+    }
+    }
+}
+
+section("Image-filled text")
+do {
+    // A red square as the fill, so "did the picture come through the letters"
+    // is a colour question with an unambiguous answer.
+    let art = NSImage(size: NSSize(width: 32, height: 32))
+    art.lockFocus()
+    NSColor(calibratedRed: 1, green: 0, blue: 0, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: 32, height: 32).fill()
+    art.unlockFocus()
+    let artPath = NSTemporaryDirectory() + "/verify-textfill.png"
+    if let tiff = art.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+       let png = rep.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: artPath))
+    }
+
+    func redFraction(_ spec: TextSpec) -> Double {
+        var doc = ThumbDocument()
+        doc.width = 200; doc.height = 100
+        doc.backgroundHex = "000000"
+        doc.layers = [ThumbLayer(kind: .text(spec), widthFraction: 0.9)]
+        guard let image = ThumbnailRenderer.render(doc, provider: { _ in nil }),
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        var red = 0.0, total = 0.0
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                total += 1
+                if colour.redComponent > 0.5, colour.greenComponent < 0.3 { red += 1 }
+            }
+        }
+        return total > 0 ? red / total : -1
+    }
+
+    var plain = TextSpec(text: "FILL")
+    plain.sizeFraction = 0.5
+    plain.fillHex = "FFFFFF"
+    plain.strokeWidth = 0
+    check("white text puts no red on the canvas", redFraction(plain) < 0.001,
+          String(format: "%.4f", redFraction(plain)))
+
+    var filled = plain
+    filled.imageFillPath = artPath
+    check("an image fill shows through the letters", redFraction(filled) > 0.02,
+          String(format: "%.4f", redFraction(filled)))
+
+    // The image must be confined to the glyphs, not painted over the box.
+    check("but does not flood the whole layer", redFraction(filled) < 0.5,
+          String(format: "%.4f", redFraction(filled)))
+
+    // Image fill wins over a gradient rather than both trying to draw.
+    var both = filled
+    both.gradientHex = "00FF00"
+    check("image fill takes precedence over a gradient",
+          abs(redFraction(both) - redFraction(filled)) < 0.005)
+
+    // A path that has gone missing falls back to the flat fill.
+    var broken = plain
+    broken.imageFillPath = "/definitely/not/here.png"
+    check("a missing fill image falls back to the plain fill",
+          redFraction(broken) < 0.001)
+    try? FileManager.default.removeItem(atPath: artPath)
+}
+
+section("Thumbnail review")
+do {
+    func review(_ doc: ThumbDocument) -> ThumbCritic.Review {
+        ThumbCritic.review(document: doc,
+                           image: ThumbnailRenderer.render(doc, provider: { _ in nil }))
+    }
+
+    // A deliberately bad thumbnail: tiny text, lots of words, flat dark canvas.
+    var bad = ThumbDocument()
+    bad.width = 1280; bad.height = 720
+    bad.backgroundHex = "222222"
+    var small = TextSpec(text: "this is a very long headline with far too many words in it")
+    small.sizeFraction = 0.03
+    bad.layers = [ThumbLayer(kind: .text(small), widthFraction: 0.9)]
+    let badReview = review(bad)
+
+    // A better one: big short text on a high-contrast canvas.
+    var good = ThumbDocument()
+    good.width = 1280; good.height = 720
+    good.backgroundHex = "FFFFFF"
+    var big = TextSpec(text: "BIG WIN")
+    big.sizeFraction = 0.22
+    big.fillHex = "000000"
+    good.layers = [ThumbLayer(kind: .shape(ShapeSpec()), x: 0.3, y: 0.5,
+                              widthFraction: 0.4, heightFraction: 0.9),
+                   ThumbLayer(kind: .text(big), widthFraction: 0.8)]
+    let goodReview = review(good)
+
+    check("the better thumbnail scores higher",
+          goodReview.score > badReview.score,
+          "\(goodReview.score) vs \(badReview.score)")
+    check("scores stay inside 0…100",
+          (0...100).contains(goodReview.score) && (0...100).contains(badReview.score))
+    check("tiny text is called out",
+          badReview.findings.first { $0.title == "Text size" }?.severity == .problem)
+    check("too many words is called out",
+          badReview.findings.first { $0.title == "Word count" }?.severity != .good)
+    check("every finding carries a weight",
+          badReview.findings.allSatisfy { $0.weight >= 0 })
+    check("weights sum to about one",
+          abs(badReview.findings.reduce(0) { $0 + $1.weight } - 1.0) < 0.02,
+          String(format: "%.3f", badReview.findings.reduce(0) { $0 + $1.weight }))
+    check("every finding says something",
+          badReview.findings.allSatisfy { !$0.detail.isEmpty })
+
+    // A full-bleed background is a technique, not an error. Flagging one is
+    // the kind of false positive that gets a whole feature ignored.
+    var bleed = ThumbDocument()
+    bleed.width = 1280; bleed.height = 720
+    bleed.layers = [ThumbLayer(kind: .image(ImageSpec(path: "/synthetic")),
+                               widthFraction: 1.3, heightFraction: 1.3)]
+    check("a full-bleed background is not flagged",
+          review(bleed).findings.first { $0.title == "Inside the frame" }?.severity == .good)
+
+    // Text losing any of itself always is.
+    var offEdge = ThumbDocument()
+    offEdge.width = 1280; offEdge.height = 720
+    var runaway = TextSpec(text: "CUT OFF")
+    runaway.sizeFraction = 0.2
+    offEdge.layers = [ThumbLayer(kind: .text(runaway), x: 0.95, y: 0.5, widthFraction: 0.8)]
+    check("text running off the edge is flagged",
+          review(offEdge).findings.first { $0.title == "Inside the frame" }?.severity == .warning)
+
+    // And a layer dragged almost entirely off the canvas is.
+    var stray = ThumbDocument()
+    stray.width = 1280; stray.height = 720
+    stray.layers = [ThumbLayer(kind: .shape(ShapeSpec()), x: 1.4, y: 0.5,
+                               widthFraction: 0.3, heightFraction: 0.3)]
+    check("a layer dragged off the canvas is flagged",
+          review(stray).findings.first { $0.title == "Inside the frame" }?.severity == .warning)
+
+    // A blank canvas must not be scored at all. It used to come back 71 —
+    // full marks for having no text too small and no words too many.
+    let emptyReview = review(ThumbDocument())
+    check("a blank canvas is not scored", !emptyReview.isScoreable)
+    check("and says so instead of showing a number",
+          emptyReview.summary.contains("Nothing on the canvas"))
+    check("a design with something on it is scored", goodReview.isScoreable)
+}
+
 section("Asset library")
 do {
     let fm = FileManager.default

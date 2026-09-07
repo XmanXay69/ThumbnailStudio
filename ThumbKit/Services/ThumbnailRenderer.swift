@@ -44,10 +44,13 @@ enum ThumbnailRenderer {
         let cg = context?.cgContext
 
         // Canvas base: the document's colour, or dark so an empty document
-        // previews sensibly.
-        HexColor.color(hex: document.backgroundHex ?? ThumbDocument.defaultBackgroundHex)
-            .setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        // previews sensibly. A transparent document paints nothing at all, so
+        // the bitmap's alpha survives into a PNG.
+        if !document.transparentBackground {
+            HexColor.color(hex: document.backgroundHex ?? ThumbDocument.defaultBackgroundHex)
+                .setFill()
+            NSRect(x: 0, y: 0, width: width, height: height).fill()
+        }
 
         let size = CGSize(width: CGFloat(width), height: CGFloat(height))
         for layer in document.layers where layer.isVisible {
@@ -402,7 +405,34 @@ enum ThumbnailRenderer {
             cg?.setShadow(offset: .zero, blur: 0, color: nil)
         }
 
-        if let gradientHex = spec.gradientHex {
+        // An image through the letters, using the same trick as the gradient:
+        // the text becomes a mask and the picture draws through it. Takes
+        // precedence over a gradient, because a fill cannot be both.
+        if let fillPath = spec.imageFillPath, !fillPath.isEmpty,
+           let art = NSImage(contentsOfFile: fillPath) {
+            let maskImage = NSImage(size: rect.size, flipped: false) { drawRect in
+                NSAttributedString(string: text,
+                                   attributes: textAttributes(spec, canvasHeight: size.height,
+                                                              strokePass: false))
+                    .draw(in: drawRect)
+                return true
+            }
+            if let tiff = maskImage.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiff),
+               let mask = bitmap.cgImage {
+                cg?.saveGState()
+                cg?.clip(to: rect, mask: mask)
+                // Cover-fit, so the letters are never filled with letterbox.
+                let scale = max(rect.width / max(1, art.size.width),
+                                rect.height / max(1, art.size.height))
+                let drawn = NSSize(width: art.size.width * scale,
+                                   height: art.size.height * scale)
+                art.draw(in: NSRect(x: rect.midX - drawn.width / 2,
+                                    y: rect.midY - drawn.height / 2,
+                                    width: drawn.width, height: drawn.height))
+                cg?.restoreGState()
+            }
+        } else if let gradientHex = spec.gradientHex {
             // Gradient fill: the text drawn into its own image becomes a
             // mask; the gradient draws through it.
             let fillImage = NSImage(size: rect.size, flipped: false) { drawRect in
@@ -581,9 +611,22 @@ enum ThumbnailRenderer {
     static func encoded(_ image: NSImage, asPNG: Bool, jpegQuality: Double) -> Data? {
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return asPNG
-            ? rep.representation(using: .png, properties: [:])
-            : rep.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality])
+        if asPNG { return rep.representation(using: .png, properties: [:]) }
+        // JPEG has no alpha channel. Encoding a transparent bitmap straight to
+        // JPEG gives you whatever was in the unwritten pixels — usually black.
+        // Flatten onto white first so the file is at least predictable.
+        guard rep.hasAlpha else {
+            return rep.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality])
+        }
+        let flattened = NSImage(size: image.size)
+        flattened.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        flattened.unlockFocus()
+        guard let flatTiff = flattened.tiffRepresentation,
+              let flatRep = NSBitmapImageRep(data: flatTiff) else { return nil }
+        return flatRep.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality])
     }
 
     /// Walks JPEG quality down until the file fits the cap. Returns the data

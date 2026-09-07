@@ -80,10 +80,23 @@ extension ThumbnailStudioPane {
                             set: { value in
                                 var document = doc
                                 document.backgroundHex = value
+                                document.transparentBackground = false
                                 apply(document, "Canvas Colour")
                             }))
+                            .disabled(doc.transparentBackground)
+                            .opacity(doc.transparentBackground ? 0.4 : 1)
                     }
                 }
+                Toggle("Transparent", isOn: Binding(
+                    get: { doc.transparentBackground },
+                    set: { on in
+                        var document = doc
+                        document.transparentBackground = on
+                        apply(document, "Transparent Background")
+                    }))
+                    .toggleStyle(.checkbox)
+                    .font(Studio.Typo.body)
+                    .help("Exports a PNG with real alpha. JPEG has no transparency and flattens onto white.")
             }
             StudioDivider()
             StudioSection("Guides", symbol: "ruler", isExpanded: expansion("guides")) {
@@ -315,6 +328,26 @@ extension ThumbnailStudioPane {
                 StudioRow("Fill") {
                     StudioColorWell(hex: textBinding(id, spec, \.fillHex, "Text Fill"))
                 }
+                StudioRow("Image fill") {
+                    HStack(spacing: Studio.Space.xs) {
+                        Button(spec.imageFillPath == nil ? "Choose…" : "Replace…") {
+                            let panel = NSOpenPanel()
+                            panel.allowedContentTypes = [.png, .jpeg, .image]
+                            panel.message = "Show this image through the letters"
+                            guard panel.runModal() == .OK, let url = panel.url else { return }
+                            let path = ThumbLibrary.adopt(url) ?? url.path
+                            mutateText(id, "Text Image Fill") { $0.imageFillPath = path }
+                        }
+                        .buttonStyle(.studio(.secondary, .small))
+                        if spec.imageFillPath != nil {
+                            Button("Clear") {
+                                mutateText(id, "Clear Image Fill") { $0.imageFillPath = nil }
+                            }
+                            .buttonStyle(.studio(.ghost, .small))
+                        }
+                    }
+                }
+                .help("Fills the letters with a picture. Overrides the gradient.")
                 StudioRow("Gradient") {
                     HStack(spacing: Studio.Space.s) {
                         Toggle("", isOn: Binding(

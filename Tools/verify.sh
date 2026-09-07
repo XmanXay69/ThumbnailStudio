@@ -74,6 +74,7 @@ swiftc -O -o "$BIN" \
   ThumbKit/Services/ThumbFrameSource.swift \
   ThumbKit/Services/ThumbStore.swift \
   ThumbKit/Services/ThumbLibrary.swift \
+  ThumbKit/Services/ThumbCritic.swift \
   ThumbKit/Services/CutoutService.swift \
   ThumbKit/Services/CutoutRun.swift \
   VODEditor/Services/PunchInService.swift \

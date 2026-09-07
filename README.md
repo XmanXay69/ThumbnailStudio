@@ -69,6 +69,25 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Review
+
+⌘R, or the checklist button. Measures the thumbnail and says what it found:
+text height at up-next size, what the duration badge covers, word count,
+whether anything important falls off the edge, contrast, background detail,
+and face size. Each finding carries its share of the score, so a 70 tells you
+which 30 you lost.
+
+It is deliberately not a prediction. This app has no click-through data, no
+channel history and no model of your audience, and the sheet says so rather
+than implying otherwise with a confident-looking gauge. The rules it applies
+are the ones that hold regardless of audience: text too small to read at feed
+size is wasted, and text the duration badge covers is wasted.
+
+A blank canvas is not scored at all — it used to come back 71, full marks for
+having no text too small and no words too many, which is the app flattering
+itself. A background that bleeds off the edge is left alone; that is a
+technique, not a mistake.
+
 ### The library
 
 ⌘L, or the tool-rail button. Two sources, neither needing a catalogue you have

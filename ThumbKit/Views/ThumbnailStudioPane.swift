@@ -29,6 +29,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var showFramePicker = false
     @State var showExport = false
     @State var showLibrary = false
+    @State var showReview = false
     @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
@@ -138,6 +139,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                                    set: { showExport = $0; editor.exportRequested = $0 })) {
             ExportSheet(document: doc, image: canvasImage)
         }
+        .sheet(isPresented: $showReview) {
+            ReviewSheet(document: doc, image: canvasImage)
+        }
         .sheet(isPresented: $showLibrary) {
             AssetLibrarySheet { path in
                 addLayer(.image(ImageSpec(path: path)), action: "Add Image")
@@ -165,6 +169,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             StudioIconButton("crop", help: "Crop & cut") { beginCrop() }
                 .disabled(!selectedIsImage)
             StudioIconButton("photo.stack", help: "Library  ⌘L") { showLibrary = true }
+            StudioIconButton("checklist", help: "Review this thumbnail  ⌘R") {
+                showReview = true
+            }
             StudioIconButton("rectangle.on.rectangle.angled",
                              help: "Preview where it will be seen  ⌘P") {
                 showPreview = true

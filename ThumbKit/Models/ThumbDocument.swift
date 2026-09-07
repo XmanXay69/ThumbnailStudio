@@ -12,6 +12,11 @@ struct ThumbDocument: Codable, Equatable {
     /// misreports what the renderer paints.
     var backgroundHex: String?
     static let defaultBackgroundHex = "141414"
+    /// Leaves the canvas empty instead of painting a base colour, so a PNG
+    /// export carries real alpha. Distinct from `backgroundHex == nil`, which
+    /// means "no colour chosen, use the default" — an overlay and an
+    /// unstyled document are not the same thing.
+    var transparentBackground: Bool = false
     var layers: [ThumbLayer] = []
 
     init() {}
@@ -24,6 +29,7 @@ struct ThumbDocument: Codable, Equatable {
         width = value(.width, 1280)
         height = value(.height, 720)
         backgroundHex = try? container.decodeIfPresent(String.self, forKey: .backgroundHex)
+        transparentBackground = value(.transparentBackground, false)
         layers = value(.layers, [])
     }
 
@@ -329,6 +335,9 @@ struct TextSpec: Codable, Equatable {
     var fillHex: String = "FFFFFF"
     /// A vertical gradient when set — fill at the top, this at the bottom.
     var gradientHex: String?
+    /// An image showing through the letters instead of a flat fill. Takes
+    /// precedence over the gradient when both are set.
+    var imageFillPath: String?
     var strokeHex: String = "000000"
     /// Stroke width in pixels at 720p; scales with the canvas.
     var strokeWidth: Double = 10
@@ -362,6 +371,7 @@ struct TextSpec: Codable, Equatable {
         alignment = value(.alignment, "center")
         fillHex = value(.fillHex, "FFFFFF")
         gradientHex = try? container.decodeIfPresent(String.self, forKey: .gradientHex)
+        imageFillPath = try? container.decodeIfPresent(String.self, forKey: .imageFillPath)
         strokeHex = value(.strokeHex, "000000")
         strokeWidth = value(.strokeWidth, 10)
         shadowEnabled = value(.shadowEnabled, true)
