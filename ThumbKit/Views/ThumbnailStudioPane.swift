@@ -87,6 +87,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .onAppear {
             store.timelineUndoManager = undoManager
             ThumbKeyRouter.shared.previewHandler = { showPreview = true }
+            ThumbKeyRouter.shared.reviewHandler = { showReview = true }
+            ThumbKeyRouter.shared.libraryHandler = { showLibrary = true }
             ThumbKeyRouter.shared.canvasWidth = doc.width
             ThumbKeyRouter.shared.canvasHeight = doc.height
             rerender()

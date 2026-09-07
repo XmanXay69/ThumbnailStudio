@@ -32,10 +32,15 @@ extension ThumbnailStudioPane {
                     .padding(Studio.Space.m)
             }
             StudioDivider()
-            Button("Export…") { showExport = true }
-                .buttonStyle(.studio(.primary, .large, fullWidth: true))
-                .keyboardShortcut("e", modifiers: .command)
-                .padding(Studio.Space.m)
+            HStack(spacing: Studio.Space.s) {
+                Button("Review") { showReview = true }
+                    .buttonStyle(.studio(.secondary, .large))
+                    .help("Measure this thumbnail at the size people see it  ⌘R")
+                Button("Export…") { showExport = true }
+                    .buttonStyle(.studio(.primary, .large, fullWidth: true))
+                    .keyboardShortcut("e", modifiers: .command)
+            }
+            .padding(Studio.Space.m)
         }
         .background(Studio.Palette.panel)
     }

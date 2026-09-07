@@ -121,6 +121,10 @@ final class ThumbKeyRouter: ObservableObject {
     /// Opens the real-size preview. Owned by the pane, which is the only
     /// thing that has the rendered image to show.
     var previewHandler: (() -> Void)?
+    /// Opens the review sheet. Same shape as the preview handler: the pane
+    /// owns the rendered image, so the menu asks it rather than the reverse.
+    var reviewHandler: (() -> Void)?
+    var libraryHandler: (() -> Void)?
     /// The editor's own window. Every key is ignored unless this exact window
     /// is key, which is what makes sheets, panels, `NSOpenPanel` and a second
     /// design window safe for free.
