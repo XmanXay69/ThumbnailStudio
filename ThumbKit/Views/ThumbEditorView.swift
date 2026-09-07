@@ -14,6 +14,7 @@ struct ThumbEditorView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var nameDraft = ""
     @State private var hoveringName = false
+    @State private var editingName = false
     @State private var canUndo = false
     @State private var canRedo = false
     @FocusState private var nameFocused: Bool
@@ -55,17 +56,26 @@ struct ThumbEditorView: View {
         // UndoManager publishes nothing SwiftUI observes, so mirror its state
         // off the notifications it does post — otherwise the buttons freeze in
         // whatever state they had when the view first appeared.
-        .onReceive(NotificationCenter.default.publisher(
-            for: .NSUndoManagerCheckpoint)) { _ in refreshUndoState() }
+        //
+        // NOT NSUndoManagerCheckpoint: that fires many times per run loop, and
+        // writing state on each one re-evaluates the body, which posts another
+        // checkpoint. The loop starved layout so thoroughly that the window
+        // never sized itself and the editor came up 0x0.
         .onReceive(NotificationCenter.default.publisher(
             for: .NSUndoManagerDidUndoChange)) { _ in refreshUndoState() }
         .onReceive(NotificationCenter.default.publisher(
             for: .NSUndoManagerDidRedoChange)) { _ in refreshUndoState() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: .NSUndoManagerDidCloseUndoGroup)) { _ in refreshUndoState() }
+        .onChange(of: store.thumbDoc) { _, _ in refreshUndoState() }
     }
 
     private func refreshUndoState() {
-        canUndo = undoManager?.canUndo ?? false
-        canRedo = undoManager?.canRedo ?? false
+        // Guarded: a redundant write is still a body re-evaluation.
+        let undoable = undoManager?.canUndo ?? false
+        let redoable = undoManager?.canRedo ?? false
+        if undoable != canUndo { canUndo = undoable }
+        if redoable != canRedo { canRedo = redoable }
     }
 
     private var currentName: String {
@@ -155,24 +165,53 @@ struct ThumbEditorView: View {
 
     // MARK: - Name
 
-    /// The document name, edited in place. Transparent until you touch it — a
-    /// text field drawn as a text field in a title bar reads as a form.
+    /// The document name. A label until you click it, then a field — so the
+    /// editor doesn't open with the title selected and your first keystroke
+    /// renaming the design instead of reaching the canvas.
+    @ViewBuilder
     private var nameField: some View {
-        TextField("Untitled", text: $nameDraft)
-            .textFieldStyle(.plain)
-            .font(Studio.Typo.title)
-            .foregroundStyle(Studio.Palette.textPrimary)
-            .focused($nameFocused)
-            .frame(minWidth: 80, idealWidth: 180, maxWidth: 280, alignment: .leading)
-            .padding(.horizontal, Studio.Space.xs)
-            .frame(height: Studio.Metric.controlS)
-            .background(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous)
-                .fill(nameFocused || hoveringName ? Studio.Palette.control : .clear))
-            .studioFocusRing(nameFocused, radius: Studio.Radius.field)
-            .onHover { hoveringName = $0 }
-            .onSubmit { commitName() }
-            .onChange(of: nameFocused) { _, focused in if !focused { commitName() } }
-            .animation(Studio.Motion.hover, value: hoveringName)
+        if editingName {
+            TextField("Untitled", text: $nameDraft)
+                .textFieldStyle(.plain)
+                .font(Studio.Typo.title)
+                .foregroundStyle(Studio.Palette.textPrimary)
+                .focused($nameFocused)
+                .frame(minWidth: 80, idealWidth: 180, maxWidth: 280, alignment: .leading)
+                .padding(.horizontal, Studio.Space.xs)
+                .frame(height: Studio.Metric.controlS)
+                .background(RoundedRectangle(cornerRadius: Studio.Radius.field,
+                                             style: .continuous)
+                    .fill(Studio.Palette.control))
+                .studioFocusRing(nameFocused, radius: Studio.Radius.field)
+                .onSubmit { finishRenaming() }
+                .onExitCommand { nameDraft = currentName; finishRenaming() }
+                .onChange(of: nameFocused) { _, focused in
+                    if !focused { finishRenaming() }
+                }
+                .task { nameFocused = true }
+        } else {
+            Text(currentName)
+                .font(Studio.Typo.title)
+                .foregroundStyle(Studio.Palette.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, Studio.Space.xs)
+                .frame(height: Studio.Metric.controlS)
+                .background(RoundedRectangle(cornerRadius: Studio.Radius.field,
+                                             style: .continuous)
+                    .fill(hoveringName ? Studio.Palette.control : .clear))
+                .onHover { hoveringName = $0 }
+                .onTapGesture {
+                    nameDraft = currentName
+                    editingName = true
+                }
+                .help("Click to rename")
+                .animation(Studio.Motion.hover, value: hoveringName)
+        }
+    }
+
+    private func finishRenaming() {
+        editingName = false
+        commitName()
     }
 
     private func commitName() {

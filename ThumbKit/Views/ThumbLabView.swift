@@ -12,7 +12,7 @@ struct ThumbLabView: View {
     var onClose: (() -> Void)?
 
     @State private var designs: [StandaloneThumbStore.Design] = []
-    @State private var store: StandaloneThumbStore?
+    @State private var store: StandaloneThumbStore? = ThumbLabView.launchDesign()
     @State private var selectedID: String?
     @State private var search = ""
     @State private var sort = Sort.recent
@@ -83,6 +83,10 @@ struct ThumbLabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .focusable()
+            // It holds focus so the arrow keys, Return and Delete work on the
+            // designs — but a system focus ring drawn around the entire
+            // scroll view reads as a stray blue line across the window.
+            .focusEffectDisabled()
             .focused($gridFocused)
             // Focus starts on the grid, not in the search field: otherwise
             // the window opens with the search box lit up, and the arrow keys
@@ -310,8 +314,12 @@ struct ThumbLabView: View {
             .padding(Studio.Space.s)
         }
         .studioSelectable(isSelected: selectedID == design.id)
-        .onTapGesture(count: 2) { open(design) }
-        .onTapGesture { selectedID = design.id; gridFocused = true }
+        .contentShape(Rectangle())
+        // A Button, not stacked tap gestures: a single-tap recogniser sitting
+        // beside a double-tap one wins every time, which is why clicking a
+        // card used to do nothing. One click opens — this is a gallery of four
+        // designs, not a file browser, and selection is for the keyboard.
+        .onTapGesture { open(design) }
         .contextMenu {
             Button("Open") { open(design) }
             Button("Duplicate") { duplicate(design) }
@@ -351,6 +359,22 @@ struct ThumbLabView: View {
     // MARK: - Actions
 
     private func reload() { designs = StandaloneThumbStore.designs() }
+
+    /// `ThumbStudio --open "casino"` lands straight in that design — the same
+    /// flag the VOD editor has, for driving the UI in scripted runs and
+    /// screenshots without clicking. Resolved as the initial value so the
+    /// window sizes itself around the editor rather than being swapped out
+    /// from under it.
+    static func launchDesign() -> StandaloneThumbStore? {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--open"),
+              index + 1 < arguments.count else { return nil }
+        let query = arguments[index + 1].lowercased()
+        guard let match = StandaloneThumbStore.designs().first(where: {
+            $0.name.lowercased().contains(query)
+        }) else { return nil }
+        return StandaloneThumbStore(fileURL: match.url)
+    }
 
     private func closeEditor() {
         store?.detachUndo()
