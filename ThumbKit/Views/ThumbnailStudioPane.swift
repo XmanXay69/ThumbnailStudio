@@ -208,6 +208,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             layer.kind = .image(spec)
         }
         AdjustedImageCache.shared.invalidate()
+        ImageAspectCache.shared.invalidate()
     }
 
     func mutateShape(_ id: UUID, _ action: String, _ change: (inout ShapeSpec) -> Void) {
@@ -294,6 +295,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             }
         }
         AdjustedImageCache.shared.invalidate()
+        ImageAspectCache.shared.invalidate()
     }
 
     private func pickImage() -> URL? {

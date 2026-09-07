@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ImageIO
 
 extension ThumbnailStudioPane {
     /// The artboard on a workbench: a neutral ground one step darker than the
@@ -248,10 +249,41 @@ extension ThumbnailStudioPane {
         case .text(let spec):
             return max(spec.sizeFraction * 1.2, 0.08)
         case .image(let spec):
-            guard let image = NSImage(contentsOfFile: spec.effectivePath),
-                  image.size.width > 0 else { return layer.heightFraction }
-            let aspect = image.size.height / image.size.width
-            return widthFraction * Double(aspect) * Double(doc.width) / Double(doc.height)
+            // Cached: this runs for every layer on every canvas repaint, and
+            // decoding a 4K PNG off disk inside a ForEach body is how a
+            // smooth drag turns into a slideshow.
+            guard let aspect = ImageAspectCache.shared.aspect(of: spec.effectivePath) else {
+                return layer.heightFraction
+            }
+            return widthFraction * aspect * Double(doc.width) / Double(doc.height)
         }
     }
+}
+
+/// Height over width for an image file, read once. Uses ImageIO so it reads
+/// the header rather than decoding the whole bitmap.
+@MainActor
+final class ImageAspectCache {
+    static let shared = ImageAspectCache()
+    private var cache: [String: Double?] = [:]
+
+    func aspect(of path: String) -> Double? {
+        guard !path.isEmpty else { return nil }
+        if let hit = cache[path] { return hit }
+        let value: Double? = {
+            guard let source = CGImageSourceCreateWithURL(
+                    URL(fileURLWithPath: path) as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                    as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Double,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Double,
+                  width > 0 else { return nil }
+            return height / width
+        }()
+        cache[path] = value
+        if cache.count > 500 { cache.removeAll() }
+        return value
+    }
+
+    func invalidate() { cache.removeAll() }
 }
