@@ -6,6 +6,10 @@ struct ProjectView: View {
     /// it's running) survives this view being torn down by navigation.
     @ObservedObject private var session: ProjectSession
     @StateObject private var player = PlayerController()
+    /// The thumbnail editor's own state — selection, zoom, the layer
+    /// clipboard. Owned here rather than inside the studio pane so it survives
+    /// switching tabs and so the menu bar can reach it.
+    @StateObject private var thumbEditor: ThumbEditorModel<ProjectSession>
 
     @State private var zoomSeconds: Double = 60
     @State private var showInspector = true
@@ -45,7 +49,9 @@ struct ProjectView: View {
     }
 
     init(project: VODProject, store: ProjectStore) {
-        session = SessionRegistry.shared.session(for: project, store: store)
+        let borrowed = SessionRegistry.shared.session(for: project, store: store)
+        session = borrowed
+        _thumbEditor = StateObject(wrappedValue: ThumbEditorModel(store: borrowed))
         _vocabularyDraft = State(initialValue: project.vocabularyPrompt)
         _captionStyleDraft = State(initialValue: project.captionStyle)
     }
@@ -65,7 +71,8 @@ struct ProjectView: View {
                                                  onOpenEditor: { mode = .editor })
                     case .thumb: ThumbnailStudioPane(
                         store: session,
-                        frameSource: ProjectFrameSource(session: session, player: player))
+                        frameSource: ProjectFrameSource(session: session, player: player),
+                        editor: thumbEditor)
                     case .publish: PublishPane(session: session)
                     }
                 }

@@ -564,6 +564,16 @@ public struct StudioSection<Content: View>: View {
 }
 
 /// The hairline between inspector sections. One rule, one alpha.
+/// The vertical twin of `StudioDivider`, for the seams between rails.
+public struct StudioVRule: View {
+    public init() {}
+    public var body: some View {
+        Rectangle()
+            .fill(Studio.Palette.separator)
+            .frame(width: Studio.Metric.hairline)
+    }
+}
+
 public struct StudioDivider: View {
     public init() {}
     public var body: some View {

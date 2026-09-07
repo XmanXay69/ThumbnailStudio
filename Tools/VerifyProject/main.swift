@@ -2484,19 +2484,19 @@ do {
 
 section("Layer verbs the keyboard drives")
 do {
-    var doc = ThumbDocument()
     let a = ThumbLayer(kind: .text(TextSpec(text: "A")))
     let b = ThumbLayer(kind: .text(TextSpec(text: "B")))
     let c = ThumbLayer(kind: .text(TextSpec(text: "C")))
-    doc.layers = [a, b, c]
 
-    // Duplicate lands directly above its original and is a distinct layer,
-    // offset so you can see there are two of them.
-    let copyID = doc.duplicate(layerID: b.id)
-    check("duplicate returns a new id", copyID != nil && copyID != b.id)
+    // Duplicate lands directly above its original, offset so you can see
+    // there are two, and never inherits a lock you would then have to undo.
+    var doc = ThumbDocument()
+    doc.layers = [a, b, c]
+    let copies = doc.duplicateLayers(ids: [b.id])
+    check("duplicate returns the new ids", copies.count == 1 && copies[0] != b.id)
     check("duplicate inserts directly above the original",
-          doc.layers.count == 4 && doc.layers[1].id == b.id && doc.layers[2].id == copyID)
-    if case .text(let spec)? = doc.layers.first(where: { $0.id == copyID })?.kind {
+          doc.layers.count == 4 && doc.layers[1].id == b.id && doc.layers[2].id == copies[0])
+    if case .text(let spec)? = doc.layers.first(where: { $0.id == copies[0] })?.kind {
         check("duplicate copies the content", spec.text == "B")
     } else {
         check("duplicate copies the content", false)
@@ -2504,45 +2504,100 @@ do {
     check("duplicate offsets the copy so it is visible",
           (doc.layers[2].x - b.x) > 0.001 && (doc.layers[2].y - b.y) > 0.001)
 
-    // A locked layer's copy is unlocked — otherwise duplicating a locked
-    // layer gives you something you cannot move.
     var locked = ThumbDocument()
     var lockedLayer = ThumbLayer(kind: .shape(ShapeSpec()))
     lockedLayer.isLocked = true
     locked.layers = [lockedLayer]
-    let unlockedCopy = locked.duplicate(layerID: lockedLayer.id)
+    let unlockedCopy = locked.duplicateLayers(ids: [lockedLayer.id])
     check("a duplicate of a locked layer is not itself locked",
-          locked.layers.first(where: { $0.id == unlockedCopy })?.isLocked == false)
+          locked.layers.first(where: { $0.id == unlockedCopy.first })?.isLocked == false)
+
+    // Duplicating several at once must not shift the indexes out from under
+    // itself — the classic off-by-one in this exact function.
+    var many = ThumbDocument()
+    many.layers = [a, b, c]
+    let all = many.duplicateLayers(ids: [a.id, b.id, c.id])
+    check("duplicating every layer produces one copy each",
+          all.count == 3 && many.layers.count == 6)
+    check("every duplicate is a distinct layer", Set(many.layers.map(\.id)).count == 6)
 
     var emptyDoc = ThumbDocument()
     check("duplicating an unknown layer is a no-op",
-          emptyDoc.duplicate(layerID: UUID()) == nil)
+          emptyDoc.duplicateLayers(ids: [UUID()]).isEmpty)
 
-    // Delete hands back what to select next, so the inspector never empties
-    // while there is still something on the canvas.
+    // Delete reports whether anything went, so no-ops skip the undo entry.
     var deleting = ThumbDocument()
     deleting.layers = [a, b, c]
-    let afterMiddle = deleting.remove(layerID: b.id)
-    check("delete removes exactly one layer", deleting.layers.count == 2)
-    check("delete selects the layer that took its place", afterMiddle == c.id)
-    let afterTop = deleting.remove(layerID: c.id)
-    check("deleting the top layer falls back to the new top", afterTop == a.id)
-    check("deleting the last layer selects nothing",
-          deleting.remove(layerID: a.id) == nil && deleting.layers.isEmpty)
-    check("deleting an unknown layer is a no-op",
-          emptyDoc.remove(layerID: UUID()) == nil)
+    check("delete removes the named layers",
+          deleting.removeLayers(ids: [a.id, c.id]) && deleting.layers.map(\.id) == [b.id])
+    check("deleting nothing reports nothing",
+          !deleting.removeLayers(ids: [UUID()]) && deleting.layers.count == 1)
 
-    // Tab cycles the stack and wraps at both ends.
+    // Tab walks the rail's order — topmost first — and wraps both ways.
     var tabbing = ThumbDocument()
     tabbing.layers = [a, b, c]
-    check("tab starts at the top layer when nothing is selected",
-          tabbing.neighbour(of: nil, offset: 1) == c.id)
-    check("tab walks toward the front", tabbing.neighbour(of: a.id, offset: 1) == b.id)
-    check("shift-tab walks toward the back", tabbing.neighbour(of: b.id, offset: -1) == a.id)
-    check("tab wraps past the front", tabbing.neighbour(of: c.id, offset: 1) == a.id)
-    check("shift-tab wraps past the back", tabbing.neighbour(of: a.id, offset: -1) == c.id)
+    check("tab enters at the top layer",
+          tabbing.neighbourLayerID(after: nil, forward: true) == c.id)
+    check("shift-tab enters at the bottom layer",
+          tabbing.neighbourLayerID(after: nil, forward: false) == a.id)
+    check("tab walks down the rail",
+          tabbing.neighbourLayerID(after: c.id, forward: true) == b.id)
+    check("shift-tab walks back up",
+          tabbing.neighbourLayerID(after: b.id, forward: false) == c.id)
+    check("tab wraps at the end",
+          tabbing.neighbourLayerID(after: a.id, forward: true) == c.id)
     check("tab on an empty document selects nothing",
-          ThumbDocument().neighbour(of: nil, offset: 1) == nil)
+          ThumbDocument().neighbourLayerID(after: nil, forward: true) == nil)
+
+    // A mixed selection resolves to one state rather than alternating.
+    var flags = ThumbDocument()
+    var visibleLayer = a
+    var hiddenLayer = b
+    hiddenLayer.isVisible = false
+    flags.layers = [visibleLayer, hiddenLayer]
+    let wrote = flags.setFlag(\.isVisible, ids: [visibleLayer.id, hiddenLayer.id])
+    check("a mixed visibility selection resolves to all-on",
+          wrote && flags.layers.allSatisfy(\.isVisible))
+    check("toggling again turns the whole selection off",
+          !flags.setFlag(\.isVisible, ids: [visibleLayer.id, hiddenLayer.id])
+              && flags.layers.allSatisfy { !$0.isVisible })
+    _ = visibleLayer
+
+    // Nudge skips locked layers and clamps at the canvas edge.
+    var nudging = ThumbDocument()
+    var free = ThumbLayer(kind: .shape(ShapeSpec()), x: 0.5, y: 0.5)
+    var pinned = ThumbLayer(kind: .shape(ShapeSpec()), x: 0.5, y: 0.5)
+    pinned.isLocked = true
+    nudging.layers = [free, pinned]
+    check("nudge moves the unlocked layer",
+          nudging.nudge(ids: [free.id, pinned.id], dx: 0.1, dy: 0)
+              && abs((nudging.layers[0].x) - 0.6) < 0.0001)
+    check("nudge leaves a locked layer alone", abs(nudging.layers[1].x - 0.5) < 0.0001)
+    check("nudging only locked layers reports nothing",
+          !nudging.nudge(ids: [pinned.id], dx: 0.1, dy: 0))
+    nudging.nudge(ids: [free.id], dx: 5, dy: -5)
+    check("nudge clamps to the canvas",
+          nudging.layers[0].x <= 1.0001 && nudging.layers[0].y >= -0.0001)
+    _ = free
+
+    // One arrow press must move exactly one exported pixel.
+    let fine = ThumbNudge.step(coarse: false, canvasWidth: 1280, canvasHeight: 720)
+    check("an arrow press is one canvas pixel",
+          abs(fine.dx * 1280 - 1) < 0.0001 && abs(fine.dy * 720 - 1) < 0.0001)
+    let coarse = ThumbNudge.step(coarse: true, canvasWidth: 1280, canvasHeight: 720)
+    check("shift-arrow is ten", abs(coarse.dx * 1280 - 10) < 0.0001)
+
+    // Repeated destructive verbs must not fold into one undo step.
+    let now = Date()
+    check("a held nudge collapses into one undo step",
+          UndoCoalescing.shouldCoalesce(action: "Nudge Layer", lastAction: "Nudge Layer",
+                                        lastAt: now, now: now.addingTimeInterval(0.1)))
+    check("two deletes are two undo steps",
+          !UndoCoalescing.shouldCoalesce(action: "Delete Layer", lastAction: "Delete Layer",
+                                         lastAt: now, now: now.addingTimeInterval(0.1)))
+    check("two duplicates are two undo steps",
+          !UndoCoalescing.shouldCoalesce(action: "Duplicate Layer", lastAction: "Duplicate Layer",
+                                         lastAt: now, now: now.addingTimeInterval(0.1)))
 }
 
     check("cut fields decode with safe defaults from old documents",

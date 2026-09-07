@@ -13,6 +13,18 @@ protocol ThumbStore: ObservableObject {
 
     func applyThumbDoc(_ document: ThumbDocument, action: String?)
     func removeBackground(layerID: UUID)
+
+    /// Ends the current undo-coalescing run, so the next mutation starts a new
+    /// step. A held arrow key is one undo entry; letting go should end it.
+    func endUndoRun()
+
+    /// Where pasted and generated images are written. App-owned by default —
+    /// a layer must never point at a file the app did not put somewhere stable.
+    var assetDirectory: URL { get }
+}
+
+extension ThumbStore {
+    var assetDirectory: URL { ThumbAssets.root }
 }
 
 /// A design in the Thumb Lab: one JSON file, no project, no video. The lab
@@ -158,6 +170,11 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
         undo.setActionName(action)
     }
 
+    func endUndoRun() {
+        lastUndoAction = nil
+        lastUndoRegistration = .distantPast
+    }
+
     private func persist() {
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
@@ -170,30 +187,18 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
               !spec.path.isEmpty else { return }
         isCuttingOut = true
         thumbStudioError = nil
-        let sourcePath = spec.path
-        Task.detached { [weak self] in
-            let destination = URL(fileURLWithPath: sourcePath)
-                .deletingPathExtension().appendingPathExtension("cutout.png")
-            do {
-                try CutoutService.removeBackground(from: URL(fileURLWithPath: sourcePath),
-                                                   writingTo: destination)
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    var document = self.thumbDoc
-                    if let index = document.layers.firstIndex(where: { $0.id == layerID }),
-                       case .image(var updated) = document.layers[index].kind {
-                        updated.cutoutPath = destination.path
-                        updated.useCutout = true
-                        updated.strokeWidth = max(updated.strokeWidth, 6)
-                        document.layers[index].kind = .image(updated)
-                    }
-                    self.isCuttingOut = false
-                    self.applyThumbDoc(document, action: "Remove Background")
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    self?.isCuttingOut = false
-                    self?.thumbStudioError = error.localizedDescription
+        let document = thumbDoc
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = CutoutRun.perform(document: document, layerID: layerID)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isCuttingOut = false
+                switch result {
+                case .success(let updated):
+                    AdjustedImageCache.shared.invalidate()
+                    self.applyThumbDoc(updated, action: "Remove Background")
+                case .failure(let error):
+                    self.thumbStudioError = error.localizedDescription
                 }
             }
         }

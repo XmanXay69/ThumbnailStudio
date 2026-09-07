@@ -6,7 +6,8 @@ import Foundation
 enum UndoCoalescing {
     static func shouldCoalesce(action: String?, lastAction: String?,
                                lastAt: Date, now: Date) -> Bool {
-        guard let action, action == lastAction else { return false }
+        guard let action, action == lastAction,
+              !discrete.contains(action) else { return false }
         return now.timeIntervalSince(lastAt) < 0.8
     }
 }

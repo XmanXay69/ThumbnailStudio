@@ -1005,6 +1005,14 @@ final class ProjectSession: ObservableObject {
 
     /// Same command pattern as the timeline: one choke point, whole-document
     /// snapshot undo, named steps, the same coalescing for slider streams.
+    /// Clears the undo-coalescing window so the next mutation starts its own
+    /// step. Named separately from the protocol method because the protocol
+    /// requirement cannot see this type's private state from an extension.
+    func endThumbUndoRun() {
+        lastUndoAction = nil
+        lastUndoRegistration = .distantPast
+    }
+
     func applyThumbDoc(_ document: ThumbDocument, action: String? = nil) {
         let previous = thumbDoc
         if let action, previous != document {
@@ -1099,39 +1107,25 @@ final class ProjectSession: ObservableObject {
         applyThumbDoc(document, action: "Grab Frame")
     }
 
-    /// One-click background removal on an image layer, via Vision. The
-    /// original stays; the cutout is a separate PNG the layer can toggle.
+    /// One-click background removal on an image layer, entirely on this Mac.
+    /// The original stays; the cutout is a separate PNG the layer toggles.
     func removeBackground(layerID: UUID) {
         guard case .image(let spec)? = thumbDoc.layers.first(where: { $0.id == layerID })?.kind,
               !spec.path.isEmpty else { return }
         isCuttingOut = true
         thumbStudioError = nil
-        let sourcePath = spec.path
-        Task.detached { [weak self] in
-            let destination = URL(fileURLWithPath: sourcePath)
-                .deletingPathExtension().appendingPathExtension("cutout.png")
-            do {
-                try CutoutService.removeBackground(from: URL(fileURLWithPath: sourcePath),
-                                                   writingTo: destination)
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    var document = self.thumbDoc
-                    if let index = document.layers.firstIndex(where: { $0.id == layerID }),
-                       case .image(var updated) = document.layers[index].kind {
-                        updated.cutoutPath = destination.path
-                        updated.useCutout = true
-                        updated.shadowEnabled = true
-                        document.layers[index].kind = .image(updated)
-                        self.applyThumbDoc(document, action: "Remove Background")
-                        AdjustedImageCache.shared.invalidate()
-                    }
-                    self.isCuttingOut = false
-                    self.append("Thumbnail: background removed")
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    self?.isCuttingOut = false
-                    self?.thumbStudioError = error.localizedDescription
+        let document = thumbDoc
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = CutoutRun.perform(document: document, layerID: layerID)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isCuttingOut = false
+                switch result {
+                case .success(let updated):
+                    AdjustedImageCache.shared.invalidate()
+                    self.applyThumbDoc(updated, action: "Remove Background")
+                case .failure(let error):
+                    self.thumbStudioError = error.localizedDescription
                 }
             }
         }

@@ -29,7 +29,8 @@ struct ThumbLabView: View {
     var body: some View {
         Group {
             if let store {
-                ThumbEditorView(store: store, onBack: closeEditor)
+                ThumbEditorView(store: store, onBack: closeEditor,
+                                onNewDesign: { create(preset: ThumbDocument.canvasPresets[0]) })
             } else {
                 gallery
             }

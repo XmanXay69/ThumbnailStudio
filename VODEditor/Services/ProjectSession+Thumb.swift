@@ -2,7 +2,11 @@ import Foundation
 
 /// The VOD app's half of the thumbnail contract: the session already has the
 /// document, the undo plumbing and the cutout call, so conformance is free.
-extension ProjectSession: ThumbStore {}
+extension ProjectSession: ThumbStore {
+    /// A held arrow key is one undo step; letting go ends the run so the next
+    /// press starts a new one.
+    func endUndoRun() { endThumbUndoRun() }
+}
 
 /// The frame-grab bridge. ThumbKit's studio asks for frames through
 /// `ThumbFrameSource`; here that is the project session plus the editor's

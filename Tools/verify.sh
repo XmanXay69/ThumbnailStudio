@@ -63,6 +63,7 @@ swiftc -O -o "$BIN" \
   VODEditor/Services/SocialOverlayRenderer.swift \
   ThumbKit/Models/ThumbDocument.swift \
   ThumbKit/Models/NormalizedRect.swift \
+  ThumbKit/Models/ThumbEditing.swift \
   ThumbKit/Core/HexColor.swift \
   ThumbKit/Core/EditingPrimitives.swift \
   ThumbKit/Services/ThumbnailRenderer.swift \

@@ -69,45 +69,6 @@ struct ThumbDocument: Codable, Equatable {
         case toFront, forward, backward, toBack
     }
 
-    /// A copy of one layer, nudged off the original so you can see there are
-    /// now two, inserted directly above it. Returns the new layer's id so the
-    /// caller can select it — duplicating and then not selecting the copy is
-    /// the classic way to make a user think nothing happened.
-    @discardableResult
-    mutating func duplicate(layerID: UUID) -> UUID? {
-        guard let index = layers.firstIndex(where: { $0.id == layerID }) else { return nil }
-        var copy = layers[index]
-        copy.id = UUID()
-        copy.x = min(0.97, copy.x + 0.03)
-        copy.y = min(0.97, copy.y + 0.03)
-        copy.isLocked = false
-        layers.insert(copy, at: index + 1)
-        return copy.id
-    }
-
-    /// Removes a layer. Returns the id that should be selected afterwards —
-    /// the one below it, or the new top — so a delete never leaves the
-    /// inspector staring at nothing when there is still work on the canvas.
-    @discardableResult
-    mutating func remove(layerID: UUID) -> UUID? {
-        guard let index = layers.firstIndex(where: { $0.id == layerID }) else { return nil }
-        layers.remove(at: index)
-        guard !layers.isEmpty else { return nil }
-        return layers[min(index, layers.count - 1)].id
-    }
-
-    /// Tab order. `offset` of +1 walks toward the front of the stack, -1 to
-    /// the back, wrapping at both ends. nil id starts at the top layer.
-    func neighbour(of layerID: UUID?, offset: Int) -> UUID? {
-        guard !layers.isEmpty else { return nil }
-        guard let layerID, let index = layers.firstIndex(where: { $0.id == layerID }) else {
-            return offset >= 0 ? layers.last?.id : layers.first?.id
-        }
-        let count = layers.count
-        let next = ((index + offset) % count + count) % count
-        return layers[next].id
-    }
-
     /// Restacks one layer. Returns false when the move is a no-op (already
     /// at that edge, or unknown id) so callers can skip the undo entry.
     @discardableResult
@@ -215,6 +176,13 @@ struct ImageSpec: Codable, Equatable {
     /// Set once Remove Background has run; `useCutout` swaps it in.
     var cutoutPath: String?
     var useCutout: Bool = false
+    /// How the cutout was made, kept so reopening a design can reproduce it
+    /// and so nudging the edge controls re-lifts rather than starting over.
+    /// nil instance means "every subject Vision found".
+    var cutoutInstance: Int?
+    var cutoutContract: Double = 1.0
+    var cutoutFeather: Double = 1.0
+    var cutoutContrast: Double = 0.35
     var flippedHorizontally: Bool = false
     /// Adjustments, all zero-centred.
     var brightness: Double = 0
@@ -256,6 +224,10 @@ struct ImageSpec: Codable, Equatable {
         path = try container.decode(String.self, forKey: .path)
         cutoutPath = try? container.decodeIfPresent(String.self, forKey: .cutoutPath)
         useCutout = value(.useCutout, false)
+        cutoutInstance = try? container.decodeIfPresent(Int.self, forKey: .cutoutInstance)
+        cutoutContract = value(.cutoutContract, 1.0)
+        cutoutFeather = value(.cutoutFeather, 1.0)
+        cutoutContrast = value(.cutoutContrast, 0.35)
         flippedHorizontally = value(.flippedHorizontally, false)
         brightness = value(.brightness, 0)
         contrast = value(.contrast, 0)
