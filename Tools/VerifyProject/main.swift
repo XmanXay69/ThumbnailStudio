@@ -2482,6 +2482,147 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Background removal")
+do {
+    // A white square on black is a matte: the square is the subject.
+    let side = 200.0
+    let square = CIImage(color: .white)
+        .cropped(to: CGRect(x: 60, y: 60, width: 80, height: 80))
+    let matte = square.composited(over: CIImage(color: .black)
+        .cropped(to: CGRect(x: 0, y: 0, width: side, height: side)))
+    let context = CIContext()
+
+    func coverage(_ image: CIImage) -> Double {
+        guard let cg = context.createCGImage(image, from: CGRect(x: 0, y: 0,
+                                                                 width: side, height: side))
+        else { return -1 }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        var lit = 0.0
+        var total = 0.0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                lit += Double(colour.redComponent)
+                total += 1
+            }
+        }
+        return total > 0 ? lit / total : -1
+    }
+
+    let plain = coverage(CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: 0, feather: 0, contrast: 0)))
+    check("an unrefined matte passes through unchanged", abs(plain - 0.16) < 0.03,
+          String(format: "%.3f", plain))
+
+    // Contracting pulls the edge in, which is what kills the halo of old
+    // background a raw Vision mask keeps.
+    let contracted = coverage(CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: 6, feather: 0, contrast: 0)))
+    check("contract pulls the matte edge in", contracted < plain - 0.01,
+          String(format: "%.3f vs %.3f", contracted, plain))
+
+    // Expanding is the same control in the other direction.
+    let expanded = coverage(CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: -6, feather: 0, contrast: 0)))
+    check("a negative contract grows the matte", expanded > plain + 0.01,
+          String(format: "%.3f vs %.3f", expanded, plain))
+
+    // What feather is actually for: turning a hard edge into a ramp, so the
+    // subject sits on a new background instead of being stamped onto it. It
+    // must not move the subject or leak into the far background.
+    // (Core Image blurs in linear light, so a feathered matte reads slightly
+    // brighter overall in sRGB — that biases the edge toward keeping pixels,
+    // which is why `contract` defaults above zero.)
+    func partialPixels(_ image: CIImage) -> Int {
+        guard let cg = context.createCGImage(image, from: CGRect(x: 0, y: 0,
+                                                                 width: side, height: side))
+        else { return -1 }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        var partial = 0
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                let value = Double(colour.redComponent)
+                if value > 0.05, value < 0.95 { partial += 1 }
+            }
+        }
+        return partial
+    }
+
+    func value(_ image: CIImage, x: Int, y: Int) -> Double {
+        guard let cg = context.createCGImage(image, from: CGRect(x: 0, y: 0,
+                                                                 width: side, height: side))
+        else { return -1 }
+        return Double(NSBitmapImageRep(cgImage: cg).colorAt(x: x, y: y)?.redComponent ?? -1)
+    }
+
+    let hard = CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: 0, feather: 0, contrast: 0))
+    let feathered = CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: 0, feather: 4, contrast: 0))
+    check("a hard matte has almost no partial pixels", partialPixels(hard) < 400,
+          "\(partialPixels(hard))")
+    check("feather turns the edge into a ramp",
+          partialPixels(feathered) > partialPixels(hard) * 3,
+          "\(partialPixels(feathered)) partial vs \(partialPixels(hard))")
+    check("feather leaves the middle of the subject solid",
+          value(feathered, x: 100, y: 100) > 0.95)
+    check("feather does not leak into the far background",
+          value(feathered, x: 5, y: 5) < 0.05)
+    check("feather leaves the matte the same size as the source",
+          feathered.extent == matte.extent)
+
+    // Hardening is the counterweight: it pushes a soft matte back toward a
+    // decision, which is what kills a grey halo over a busy background.
+    let hardened = CutoutService.refine(matte, options: CutoutService.Options(
+        instance: nil, contract: 0, feather: 4, contrast: 0.9))
+    check("harden collapses the ramp again",
+          partialPixels(hardened) < partialPixels(feathered),
+          "\(partialPixels(hardened)) vs \(partialPixels(feathered))")
+
+    // Every refinement must return the source extent, or CIBlendWithMask
+    // shifts the subject against the photo.
+    var extentsHeld = true
+    for contract in [-4.0, 0, 4] {
+        for feather in [0.0, 3] {
+            for contrast in [0.0, 0.8] {
+                let refined = CutoutService.refine(matte, options: CutoutService.Options(
+                    instance: nil, contract: contract, feather: feather, contrast: contrast))
+                if refined.extent != matte.extent { extentsHeld = false }
+            }
+        }
+    }
+    check("every refinement keeps the source extent", extentsHeld)
+
+    let defaults = CutoutService.Options.standard
+    check("the default cutout softens and tightens a little",
+          defaults.contract > 0 && defaults.feather > 0 && defaults.contrast > 0
+              && defaults.instance == nil)
+}
+
+section("App-owned image assets")
+do {
+    let one = Data("thumbnail-asset-one".utf8)
+    let two = Data("thumbnail-asset-two".utf8)
+    check("the digest is stable", ThumbAssets.digest(one) == ThumbAssets.digest(one))
+    check("different content digests differently",
+          ThumbAssets.digest(one) != ThumbAssets.digest(two))
+
+    // Cutouts are keyed by source, its modification time and the settings, so
+    // changing a slider produces a new file and going back reuses the old one.
+    let sourcePath = NSTemporaryDirectory() + "/verify-cutout-source.png"
+    FileManager.default.createFile(atPath: sourcePath, contents: one)
+    let a = ThumbAssets.cutoutURL(for: sourcePath, tag: "all-1.0-1.0-0.35")
+    let b = ThumbAssets.cutoutURL(for: sourcePath, tag: "all-1.0-1.0-0.35")
+    let c = ThumbAssets.cutoutURL(for: sourcePath, tag: "all-3.0-1.0-0.35")
+    check("the same settings resolve to the same cutout file", a == b)
+    check("different settings resolve to different cutout files", a != c)
+    check("cutouts live in the app's own folder, not beside the photo",
+          a.deletingLastPathComponent().lastPathComponent == "ThumbAssets"
+              && !a.path.hasPrefix(NSTemporaryDirectory()))
+    try? FileManager.default.removeItem(atPath: sourcePath)
+}
+
 section("Layer verbs the keyboard drives")
 do {
     let a = ThumbLayer(kind: .text(TextSpec(text: "A")))

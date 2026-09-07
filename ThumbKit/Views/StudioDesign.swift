@@ -531,7 +531,7 @@ public struct StudioSection<Content: View>: View {
             } label: {
                 HStack(spacing: Studio.Space.xs) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Studio.Typo.iconSmall)
                         .foregroundStyle(Studio.Palette.textTertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     if let symbol {

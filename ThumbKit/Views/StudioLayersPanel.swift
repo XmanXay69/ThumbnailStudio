@@ -222,9 +222,11 @@ final class LayerThumbnailCache {
     func image(for layer: ThumbLayer, in document: ThumbDocument) async -> NSImage? {
         let key = Self.key(layer, in: document)
         if let hit = cache[key] { return hit }
-        var solo = ThumbDocument()
-        solo.width = 80
-        solo.height = 48
+        // Rendered at the document's real size, then downsampled. Half the
+        // spec is in absolute pixels — stroke widths, shadow blur, corner
+        // radius — so a layer rendered straight into a 40pt tile would be all
+        // stroke and no glyph.
+        var solo = document
         solo.backgroundHex = nil
         var only = layer
         only.x = 0.5
@@ -232,22 +234,35 @@ final class LayerThumbnailCache {
         only.opacity = 1
         only.isVisible = true
         only.rotationDegrees = 0
-        // Fill the tile: a 5%-wide sticker would otherwise be one pixel.
-        let scale = 0.9 / max(0.05, only.widthFraction)
-        only.widthFraction *= scale
-        only.heightFraction *= scale
-        if case .text(var spec) = only.kind {
-            spec.sizeFraction = min(0.7, spec.sizeFraction * 3)
-            only.kind = .text(spec)
-        }
         solo.layers = [only]
         let rendered = await Task.detached(priority: .utility) { [solo] in
-            ThumbnailRenderer.render(solo) { spec in
+            guard let full = ThumbnailRenderer.render(solo, provider: { spec in
                 spec.effectivePath.isEmpty ? nil : NSImage(contentsOfFile: spec.effectivePath)
-            }
+            }) else { return nil as NSImage? }
+            return Self.downsampled(full, maxWidth: 96)
         }.value
         if let rendered { cache[key] = rendered }
         if cache.count > 300 { cache.removeAll() }
         return rendered
+    }
+
+    /// A small copy, so the row holds 96px of bitmap rather than 1280.
+    nonisolated static func downsampled(_ image: NSImage, maxWidth: CGFloat) -> NSImage? {
+        let scale = min(1, maxWidth / max(1, image.size.width))
+        let size = NSSize(width: max(1, (image.size.width * scale).rounded()),
+                          height: max(1, (image.size.height * scale).rounded()))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let output = NSImage(size: size)
+        output.addRepresentation(rep)
+        return output
     }
 }

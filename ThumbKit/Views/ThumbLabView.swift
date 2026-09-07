@@ -395,13 +395,15 @@ private struct LabPreview: View {
             let fileURL = url
             image = await Task.detached(priority: .utility) { () -> NSImage? in
                 guard let data = try? Data(contentsOf: fileURL),
-                      var doc = try? JSONDecoder().decode(ThumbDocument.self, from: data)
+                      let doc = try? JSONDecoder().decode(ThumbDocument.self, from: data)
                 else { return nil }
-                doc.width = max(64, doc.width / 4)
-                doc.height = max(36, doc.height / 4)
-                return ThumbnailRenderer.render(doc) { spec in
+                // Full size, then downsampled: shrinking the *document*
+                // instead would shrink the canvas but not the stroke widths
+                // and shadow radii, which are absolute pixels.
+                guard let full = ThumbnailRenderer.render(doc, provider: { spec in
                     NSImage(contentsOfFile: spec.effectivePath)
-                }
+                }) else { return nil }
+                return LayerThumbnailCache.downsampled(full, maxWidth: 600)
             }.value
         }
     }
@@ -423,13 +425,12 @@ private struct DocPreview: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous))
         .task {
-            var doc = document
+            let doc = document
             image = await Task.detached(priority: .utility) { () -> NSImage? in
-                doc.width = max(64, doc.width / 4)
-                doc.height = max(36, doc.height / 4)
-                return ThumbnailRenderer.render(doc) { spec in
+                guard let full = ThumbnailRenderer.render(doc, provider: { spec in
                     spec.effectivePath.isEmpty ? nil : NSImage(contentsOfFile: spec.effectivePath)
-                }
+                }) else { return nil }
+                return LayerThumbnailCache.downsampled(full, maxWidth: 400)
             }.value
         }
     }
