@@ -154,6 +154,10 @@ struct ThumbLayerCommands: Commands {
 
         // MARK: View
         CommandGroup(after: .toolbar) {
+            Button("Preview at Real Sizes…") { ThumbKeyRouter.shared.previewHandler?() }
+                .keyboardShortcut("p", modifiers: .command)
+                .disabled(noEditor)
+            Divider()
             Button("Zoom In") { actions?.zoom(.zoomIn) }
                 .keyboardShortcut("=", modifiers: .command)
                 .disabled(noEditor)

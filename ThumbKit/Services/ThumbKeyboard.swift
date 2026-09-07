@@ -118,6 +118,9 @@ final class ThumbKeyRouter: ObservableObject {
     /// menu key equivalent beats the window, so the gallery's own ⌘N button
     /// would never fire; the gallery registers here instead.
     var newDesignHandler: (() -> Void)?
+    /// Opens the real-size preview. Owned by the pane, which is the only
+    /// thing that has the rendered image to show.
+    var previewHandler: (() -> Void)?
     /// The editor's own window. Every key is ignored unless this exact window
     /// is key, which is what makes sheets, panels, `NSOpenPanel` and a second
     /// design window safe for free.

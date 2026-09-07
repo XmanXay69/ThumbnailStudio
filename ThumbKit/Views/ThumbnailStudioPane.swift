@@ -28,6 +28,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var croppingLayerID: UUID?
     @State var showFramePicker = false
     @State var showExport = false
+    @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
     @State var isDropTargeted = false
@@ -83,6 +84,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .thumbKeyboardLayer(editor)
         .onAppear {
             store.timelineUndoManager = undoManager
+            ThumbKeyRouter.shared.previewHandler = { showPreview = true }
             ThumbKeyRouter.shared.canvasWidth = doc.width
             ThumbKeyRouter.shared.canvasHeight = doc.height
             rerender()
@@ -135,6 +137,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                                    set: { showExport = $0; editor.exportRequested = $0 })) {
             ExportSheet(document: doc, image: canvasImage)
         }
+        .sheet(isPresented: $showPreview) {
+            PlatformPreviewSheet(document: doc, image: canvasImage, title: previewTitle)
+        }
         .sheet(isPresented: Binding(get: { editor.showCheatSheet },
                                      set: { editor.showCheatSheet = $0 })) {
             ThumbShortcutCheatSheet()
@@ -153,6 +158,10 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             StudioDivider().padding(.horizontal, Studio.Space.s)
             StudioIconButton("crop", help: "Crop & cut") { beginCrop() }
                 .disabled(!selectedIsImage)
+            StudioIconButton("rectangle.on.rectangle.angled",
+                             help: "Preview where it will be seen  ⌘P") {
+                showPreview = true
+            }
             Spacer()
             cutoutButton
             StudioIconButton("questionmark", help: "Keyboard shortcuts  ⌘/") {
@@ -162,6 +171,20 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .padding(.vertical, Studio.Space.s)
         .frame(width: Studio.Metric.toolRailWidth)
         .background(Studio.Palette.panel)
+    }
+
+    /// What the mock feed shows beside the thumbnail. The biggest text layer
+    /// is almost always the headline, which is what a real title would echo.
+    var previewTitle: String {
+        let headline = doc.layers
+            .compactMap { layer -> (Double, String)? in
+                guard case .text(let spec) = layer.kind,
+                      !spec.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { return nil }
+                return (spec.sizeFraction, spec.text)
+            }
+            .max { $0.0 < $1.0 }?.1
+        return headline?.replacingOccurrences(of: "\n", with: " ") ?? "Your video title goes here"
     }
 
     var selectedIsImage: Bool {

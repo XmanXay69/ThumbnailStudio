@@ -2482,6 +2482,53 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Small-size legibility")
+do {
+    func doc(sizeFraction: Double, x: Double = 0.5, y: Double = 0.5) -> ThumbDocument {
+        var d = ThumbDocument()
+        d.width = 1280; d.height = 720
+        var spec = TextSpec(text: "DOOMSDAY HEIST")
+        spec.sizeFraction = sizeFraction
+        d.layers = [ThumbLayer(kind: .text(spec), x: x, y: y, widthFraction: 0.8)]
+        return d
+    }
+
+    check("a design with no text reports no text",
+          ThumbLegibility.report(for: ThumbDocument()).textLayerCount == 0)
+
+    // A big headline survives the up-next rail; tiny body copy does not.
+    let big = ThumbLegibility.report(for: doc(sizeFraction: 0.16))
+    check("a headline is readable in the up-next rail", big.isReadable,
+          String(format: "%.1f px", big.smallestTextPixels ?? -1))
+    let small = ThumbLegibility.report(for: doc(sizeFraction: 0.03))
+    check("small text is flagged as unreadable there", !small.isReadable,
+          String(format: "%.1f px", small.smallestTextPixels ?? -1))
+
+    // The measurement is a real scaling, not a constant.
+    check("the reported size scales with the font",
+          (big.smallestTextPixels ?? 0) > (small.smallestTextPixels ?? 0) * 4)
+
+    // Text hidden behind YouTube's duration stamp is wasted.
+    let clear = ThumbLegibility.report(for: doc(sizeFraction: 0.12, x: 0.3, y: 0.3))
+    check("text away from the corner is not flagged",
+          clear.layersUnderDurationStamp == 0)
+    let stamped = ThumbLegibility.report(for: doc(sizeFraction: 0.12, x: 0.88, y: 0.9))
+    check("text under the duration stamp is flagged",
+          stamped.layersUnderDurationStamp == 1)
+
+    // A hidden layer is not a legibility problem.
+    var hiddenDoc = doc(sizeFraction: 0.02)
+    hiddenDoc.layers[0].isVisible = false
+    check("hidden text is ignored",
+          ThumbLegibility.report(for: hiddenDoc).textLayerCount == 0)
+
+    // Empty strings are not text.
+    var blank = ThumbDocument()
+    blank.layers = [ThumbLayer(kind: .text(TextSpec(text: "   ")))]
+    check("whitespace-only text is ignored",
+          ThumbLegibility.report(for: blank).textLayerCount == 0)
+}
+
 section("Image adjustments")
 do {
     // A red square, so a brightness/saturation change is unmistakable.

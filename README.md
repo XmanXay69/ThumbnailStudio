@@ -69,6 +69,21 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Preview at real sizes
+
+⌘P, or the tool-rail button under Crop. A thumbnail is designed at 1280×720 and
+consumed at about 360 points wide in a desktop feed and 168 in the up-next rail
+— which is why text that looked obvious in the editor disappears in the wild.
+The sheet shows the design in a home feed, search results, the up-next rail and
+a phone, surrounded by featureless grey neighbours so the only question is
+whether yours stands out. The size test drops it to 100/50/25/10%.
+
+Along the bottom is the one measurement worth making: the cap height of the
+smallest text layer *in real pixels* at up-next size, and whether any text is
+sitting under YouTube's duration stamp. Below roughly 11 px text stops
+resolving at a glance. That threshold is a rule of thumb and is stated as one —
+the app has no click-through data and does not pretend to.
+
 ### Backing it up
 
 ```bash
