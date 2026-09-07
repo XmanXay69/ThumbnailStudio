@@ -29,6 +29,10 @@ struct VODEditorApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
+            // The thumbnail tab's layer verbs, minus the design-file items —
+            // this app has its own File menu. Every one of these is disabled
+            // unless the studio is on screen.
+            ThumbLayerCommands()
         }
     }
 }

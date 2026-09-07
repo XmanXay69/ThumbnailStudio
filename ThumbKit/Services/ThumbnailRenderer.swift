@@ -590,11 +590,16 @@ extension ThumbnailRenderer {
 final class AdjustedImageCache {
     static let shared = AdjustedImageCache()
     private let cache = NSCache<NSString, NSImage>()
+    private let originals = NSCache<NSString, NSImage>()
 
     func image(for spec: ImageSpec) -> NSImage? {
         let key = cacheKey(spec) as NSString
         if let hit = cache.object(forKey: key) { return hit }
-        guard var image = NSImage(contentsOfFile: spec.effectivePath) else { return nil }
+        // Two caches, because they miss at different rates: the adjusted
+        // result changes on every slider tick, the decoded source does not.
+        // Without this, dragging Brightness re-read and re-decoded the file
+        // from disk sixty times a second.
+        guard var image = decoded(spec.effectivePath) else { return nil }
         // Cropping happens in drawImage's source rect, so every provider —
         // gallery previews, template cards, the harness — crops identically.
         if spec.hasAdjustments, let adjusted = Self.adjusted(image, spec: spec) {
@@ -604,7 +609,19 @@ final class AdjustedImageCache {
         return image
     }
 
-    func invalidate() { cache.removeAllObjects() }
+    private func decoded(_ path: String) -> NSImage? {
+        guard !path.isEmpty else { return nil }
+        let key = path as NSString
+        if let hit = originals.object(forKey: key) { return hit }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        originals.setObject(image, forKey: key)
+        return image
+    }
+
+    func invalidate() {
+        cache.removeAllObjects()
+        originals.removeAllObjects()
+    }
 
     private func cacheKey(_ spec: ImageSpec) -> String {
         "\(spec.effectivePath)|\(spec.brightness)|\(spec.contrast)|\(spec.saturation)"

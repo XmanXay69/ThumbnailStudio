@@ -12,21 +12,7 @@ struct ThumbCommands: Commands {
     private var actions: (any ThumbEditorActions)? { router.actions }
     private var noEditor: Bool { !router.isEditorActive }
 
-    /// While a text field owns the window, a pasteboard command belongs to it.
-    /// Sending the equivalent selector down the responder chain is what the
-    /// standard Edit items do; this just does it first and falls through to
-    /// the layer verb when nobody is typing.
-    private func textFirst(_ selector: Selector, _ layerVerb: () -> Void) {
-        if ThumbKeyContext.isEditingText {
-            NSApp.sendAction(selector, to: nil, from: nil)
-        } else {
-            layerVerb()
-        }
-    }
-
     var body: some Commands {
-
-        // MARK: File
         CommandGroup(replacing: .newItem) {
             Button("New Design…") {
                 if let handler = router.newDesignHandler { handler() }
@@ -51,6 +37,32 @@ struct ThumbCommands: Commands {
         }
 
         // MARK: Edit — sits after the system's Undo/Redo pair
+        ThumbLayerCommands().body
+    }
+}
+
+/// The half of the menu bar that is about layers, not about design files.
+/// The VOD editor takes this on its own: it has its own File menu, and a
+/// "New Design" item there would be a dead command.
+struct ThumbLayerCommands: Commands {
+    @ObservedObject private var router = ThumbKeyRouter.shared
+
+    private var actions: (any ThumbEditorActions)? { router.actions }
+    private var noEditor: Bool { !router.isEditorActive }
+
+    /// While a text field owns the window, a pasteboard command belongs to it.
+    /// Sending the equivalent selector down the responder chain is what the
+    /// standard Edit items do; this just does it first and falls through to
+    /// the layer verb when nobody is typing.
+    private func textFirst(_ selector: Selector, _ layerVerb: () -> Void) {
+        if ThumbKeyContext.isEditingText {
+            NSApp.sendAction(selector, to: nil, from: nil)
+        } else {
+            layerVerb()
+        }
+    }
+
+    var body: some Commands {
         CommandGroup(after: .undoRedo) {
             Divider()
             // These sit ABOVE the standard Edit items, and a menu key
@@ -167,6 +179,3 @@ struct ThumbCommands: Commands {
         }
     }
 }
-
-
-// =====================================================================

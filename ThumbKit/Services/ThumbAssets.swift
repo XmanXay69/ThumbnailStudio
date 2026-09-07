@@ -96,14 +96,23 @@ enum ThumbAssets {
         return removed
     }
 
-    /// Where a cutout of this source file belongs. Keyed by the source's own
-    /// path and modification date, so editing the original produces a new
-    /// cutout rather than silently reusing a stale one.
+    /// Where a cutout of this source file belongs. Keyed by the source's
+    /// actual bytes, not its path or timestamp: replacing an image at the same
+    /// path — a re-export from another app, a file on a volume with
+    /// second-granularity timestamps — must not silently reuse the old
+    /// subject. Falls back to path and size if the file cannot be read.
     static func cutoutURL(for sourcePath: String, tag: String) -> URL {
         ensureRoot()
-        let modified = (try? FileManager.default.attributesOfItem(atPath: sourcePath)[.modificationDate]
-            as? Date)??.timeIntervalSince1970 ?? 0
-        let key = Data("\(sourcePath)|\(modified)|\(tag)".utf8)
+        let url = URL(fileURLWithPath: sourcePath)
+        let identity: Data = {
+            if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
+                return Data(digest(data).utf8)
+            }
+            let size = (try? FileManager.default.attributesOfItem(atPath: sourcePath)[.size]
+                as? Int)??.description ?? "0"
+            return Data("\(sourcePath)|\(size)".utf8)
+        }()
+        let key = identity + Data("|\(tag)".utf8)
         return root.appendingPathComponent("cutout-\(digest(key)).png")
     }
 }

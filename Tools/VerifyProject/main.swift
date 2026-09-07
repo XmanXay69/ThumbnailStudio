@@ -2752,6 +2752,15 @@ do {
     let c = ThumbAssets.cutoutURL(for: sourcePath, tag: "all-3.0-1.0-0.35")
     check("the same settings resolve to the same cutout file", a == b)
     check("different settings resolve to different cutout files", a != c)
+    // Keyed on the bytes, not the path: replacing an image at the same path
+    // must not reuse the old subject.
+    FileManager.default.createFile(atPath: sourcePath, contents: two)
+    let afterReplace = ThumbAssets.cutoutURL(for: sourcePath, tag: "all-1.0-1.0-0.35")
+    check("replacing the source at the same path invalidates its cutout",
+          afterReplace != a)
+    FileManager.default.createFile(atPath: sourcePath, contents: one)
+    check("restoring the original content resolves back to the original cutout",
+          ThumbAssets.cutoutURL(for: sourcePath, tag: "all-1.0-1.0-0.35") == a)
     check("cutouts live in the app's own folder, not beside the photo",
           a.deletingLastPathComponent().lastPathComponent == "ThumbAssets"
               && !a.path.hasPrefix(NSTemporaryDirectory()))

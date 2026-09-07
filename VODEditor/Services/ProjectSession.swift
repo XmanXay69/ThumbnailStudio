@@ -1133,6 +1133,7 @@ final class ProjectSession: ObservableObject {
                     document.layers[index].kind = .image(current)
                     AdjustedImageCache.shared.invalidate()
                     self.applyThumbDoc(document, action: "Remove Background")
+                    self.append("Thumbnail: background removed")
                 case .failure(let error):
                     self.thumbStudioError = error.localizedDescription
                 }
