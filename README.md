@@ -126,7 +126,7 @@ transcript decoding, playhead lookup vs. a linear scan, word-timing invariants
 (monotonic, non-zero, no unhighlighted gaps), and waveform re-bucketing at every
 zoom level including degenerate ranges. Plus caption phrasing, the ducking
 envelope and filter graph, long-form input-index bookkeeping, and thumbnail and
-packaging output, link parsing, the playlist rewrite, thumbnail layers, and the two-box portrait layout. **616 checks** against
+packaging output, link parsing, the playlist rewrite, thumbnail layers, and the two-box portrait layout. **633 checks** against
 a full-length VOD; two that only mean something at length are skipped on short
 sources. Two checks about candidate overlap and cue phrasing assert the
 generation-time rules loosely enough to stay true on a project the user has
@@ -941,6 +941,21 @@ collision fix, mode-switch and bin animations.
   what is selected. Export left the object inspector and became its own sheet.
   Deleted: the gradient hero, the uppercase micro-labels, the walls of
   `LabeledContent` sliders, and every hidden shortcut button.
+- **A review pass, and the twenty-odd things it found** — splitting an app in
+  two moves a lot of assumptions. Worth recording: a menu key equivalent is
+  matched *before* the responder chain, so the Edit menu's ⌘C/⌘X/⌘V/⌘A were
+  firing on layers while you typed (they hand the key back to the field editor
+  now); Vision applies EXIF orientation and `CIImage` does not, so any photo
+  off a phone had a rotated matte stretched across it; a new design reused the
+  editor's model, so every keyboard verb kept writing to the design you just
+  left; a SwiftUI `List` is an `NSTableView` that owns arrows and Delete, and
+  the key monitor was stealing them from the VOD editor's project sidebar;
+  SwiftUI runs the incoming view's `onAppear` before the outgoing one's
+  `onDisappear`, so identity-checked teardown killed the layer that had just
+  attached; a drop shadow cast from a 1%-alpha fill is not a shadow; and
+  callbacks assigned to a view-owned model capture the view that owns it,
+  which pinned every design you opened in memory for the session.
+
 - **Previews stopped lying** — gallery cards and layer thumbnails used to
   render a *shrunken document*, which shrinks the canvas but not the stroke
   widths, shadow radii and corner radii, because those are absolute pixels.
