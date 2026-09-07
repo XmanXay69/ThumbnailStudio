@@ -194,7 +194,10 @@ final class ThumbKeyRouter: ObservableObject {
     // MARK: The gate
 
     /// Returns true when the event has been consumed and must not travel on.
-    private func handle(_ event: NSEvent) -> Bool {
+    /// Internal rather than private so the verification harness can feed it
+    /// real NSEvents and prove the gate — that Delete reaches the canvas but
+    /// never a text field — without driving the GUI.
+    func handle(_ event: NSEvent) -> Bool {
         guard let actions, let window = editorWindow,
               ThumbKeyContext.keyWindowProvider() === window,
               window.attachedSheet == nil,
