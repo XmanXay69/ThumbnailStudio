@@ -193,17 +193,18 @@ enum ThumbnailRenderer {
             let cut = cutPath(edge: spec.cutEdge, amount: spec.cutAmount,
                               flip: spec.cutFlip, in: rect)
             if maskPath != nil || cut != nil {
-                // Shadow must come from the silhouette, not the clip.
-                if spec.shadowEnabled {
-                    HexColor.color(hex: "000000").withAlphaComponent(0.011).setFill()
-                    (maskPath ?? cut)?.fill()
-                    cg?.setShadow(offset: .zero, blur: 0, color: nil)
-                }
+                // The shadow has to come from the masked silhouette, but a
+                // clip would also clip the shadow away. A transparency layer
+                // composites the clipped draw as one unit, so the shadow is
+                // cast from the result rather than from each primitive.
+                cg?.beginTransparencyLayer(auxiliaryInfo: nil)
                 cg?.saveGState()
                 maskPath?.addClip()
                 cut?.addClip()
                 image.draw(in: rect, from: sourceRect, operation: .sourceOver, fraction: 1)
                 cg?.restoreGState()
+                cg?.endTransparencyLayer()
+                cg?.setShadow(offset: .zero, blur: 0, color: nil)
                 if spec.borderWidth > 0.1, let edgePath = maskPath ?? cut {
                     HexColor.color(hex: spec.borderHex).setStroke()
                     edgePath.lineWidth = spec.borderWidth

@@ -83,8 +83,6 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .thumbKeyboardLayer(editor)
         .onAppear {
             store.timelineUndoManager = undoManager
-            editor.onExport = { showExport = true }
-            editor.onAddImageFile = { addImageFile() }
             ThumbKeyRouter.shared.canvasWidth = doc.width
             ThumbKeyRouter.shared.canvasHeight = doc.height
             rerender()
@@ -92,6 +90,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .onChange(of: undoManager) { _, manager in store.timelineUndoManager = manager }
         .onChange(of: editor.selection) { _, _ in ThumbKeyRouter.shared.refresh() }
         .onChange(of: editor.textEditingRequest) { _, id in editingTextLayer = id }
+        .onChange(of: editor.imagePickRequested) { _, wanted in
+            guard wanted else { return }
+            editor.imagePickRequested = false
+            addImageFile()
+        }
         .onChange(of: store.thumbDoc) { _, document in
             ThumbKeyRouter.shared.canvasWidth = document.width
             ThumbKeyRouter.shared.canvasHeight = document.height
@@ -121,7 +124,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                     .frame(width: 640, height: 480)
             }
         }
-        .sheet(isPresented: $showExport) {
+        .sheet(isPresented: Binding(get: { showExport || editor.exportRequested },
+                                   set: { showExport = $0; editor.exportRequested = $0 })) {
             ExportSheet(document: doc, image: canvasImage)
         }
         .sheet(isPresented: Binding(get: { editor.showCheatSheet },

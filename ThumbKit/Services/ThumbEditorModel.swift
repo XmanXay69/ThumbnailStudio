@@ -22,10 +22,14 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
     @Published var textEditingRequest: UUID?
 
     let store: Store
-    var onNewDesign: () -> Void = {}
-    var onCloseDesign: () -> Void = {}
-    var onExport: () -> Void = {}
-    var onAddImageFile: () -> Void = {}
+    /// Requests the pane fulfils. Published rather than closures: a closure
+    /// assigned from the view captures the view, the view holds this model,
+    /// and the model holds the closure — a cycle that pinned the store (and,
+    /// in the VOD editor, the whole project session) for the life of the app.
+    @Published var exportRequested = false
+    @Published var imagePickRequested = false
+    @Published var newDesignRequested = false
+    @Published var closeRequested = false
 
     init(store: Store) { self.store = store }
 
@@ -189,10 +193,10 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
         }
     }
 
-    func exportImage() { onExport() }
+    func exportImage() { exportRequested = true }
     func saveDesign() { store.applyThumbDoc(doc, action: nil) }   // autosaved; flush + no undo
-    func newDesign() { onNewDesign() }
-    func closeDesign() { onCloseDesign() }
+    func newDesign() { newDesignRequested = true }
+    func closeDesign() { closeRequested = true }
 
     func addText() {
         var document = doc
@@ -202,7 +206,7 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
         selection = Set(created)
     }
 
-    func addImageFromFile() { onAddImageFile() }
+    func addImageFromFile() { imagePickRequested = true }
     func toggleSafeZone() { showSafeZone.toggle() }
     func toggleCheatSheet() { showCheatSheet.toggle() }
     func setSpacePanning(_ panning: Bool) { isSpacePanning = panning }

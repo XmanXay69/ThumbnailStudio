@@ -74,6 +74,18 @@ enum ThumbKeyContext {
         return responder is NSSlider || responder is NSStepper
             || responder is NSSegmentedControl || responder is NSPopUpButton
     }
+
+    /// A SwiftUI `List` is an `NSTableView`, and it owns arrows, Delete, Tab
+    /// and Return for its own selection. The VOD editor hosts the studio in a
+    /// tab of the same window as its project sidebar, so without this the
+    /// canvas would steal the sidebar's keys the moment the studio was on
+    /// screen. Click the canvas (or a layer row, which focuses it) to get
+    /// them back.
+    static var isNavigatingList: Bool {
+        guard let responder = keyWindowProvider()?.firstResponder else { return false }
+        return responder is NSTableView || responder is NSOutlineView
+            || responder is NSCollectionView || responder is NSBrowser
+    }
 }
 
 /// One `NSEvent` local monitor for the whole editor. It owns the *unmodified*
@@ -99,6 +111,10 @@ final class ThumbKeyRouter: ObservableObject {
     @Published private(set) var isSpacePanning = false
 
     private(set) weak var actions: (any ThumbEditorActions)?
+    /// "New design" is the one verb that must work with no editor open. A
+    /// menu key equivalent beats the window, so the gallery's own ⌘N button
+    /// would never fire; the gallery registers here instead.
+    var newDesignHandler: (() -> Void)?
     /// The editor's own window. Every key is ignored unless this exact window
     /// is key, which is what makes sheets, panels, `NSOpenPanel` and a second
     /// design window safe for free.
@@ -109,6 +125,7 @@ final class ThumbKeyRouter: ObservableObject {
     var canvasWidth = 1280
     var canvasHeight = 720
 
+    private var attachCount = 0
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
     private var nudgeRunEnd: DispatchWorkItem?
@@ -117,6 +134,7 @@ final class ThumbKeyRouter: ObservableObject {
 
     /// Called when the editor appears. Idempotent.
     func attach(_ actions: any ThumbEditorActions) {
+        attachCount += 1
         self.actions = actions
         isEditorActive = true
         refresh()
@@ -139,7 +157,11 @@ final class ThumbKeyRouter: ObservableObject {
     /// Called when the editor goes away. Leaving the monitor installed would
     /// keep swallowing Delete on the gallery screen.
     func detach(_ actions: any ThumbEditorActions) {
-        guard self.actions === actions else { return }
+        attachCount = max(0, attachCount - 1)
+        // Leaving a tab and coming straight back runs the new onAppear before
+        // the old onDisappear, so an identity check alone would tear down the
+        // layer that just attached.
+        guard attachCount == 0, self.actions === actions else { return }
         self.actions = nil
         isEditorActive = false
         hasSelection = false
@@ -197,6 +219,8 @@ final class ThumbKeyRouter: ObservableObject {
 
         // The user is typing. Every unmodified key belongs to the text field.
         if ThumbKeyContext.isEditingText { return false }
+        // …and a focused list owns its own navigation and delete keys.
+        if ThumbKeyContext.isNavigatingList { return false }
 
         switch event.keyCode {
         case KeyCode.delete, KeyCode.forwardDelete:

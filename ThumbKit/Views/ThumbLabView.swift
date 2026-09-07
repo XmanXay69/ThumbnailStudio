@@ -40,7 +40,14 @@ struct ThumbLabView: View {
             }
         }
         .studioWindowBackground()
-        .onAppear { reload() }
+        .onAppear {
+            reload()
+            // The menu owns ⌘N; point it here so it works in the gallery too.
+            ThumbKeyRouter.shared.newDesignHandler = {
+                create(preset: ThumbDocument.canvasPresets[0])
+            }
+        }
+        .onDisappear { ThumbKeyRouter.shared.newDesignHandler = nil }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)) { _ in
             store?.reloadIfChangedExternally()
@@ -127,7 +134,6 @@ struct ThumbLabView: View {
             .help("Sort designs")
             Button("New design") { create(preset: ThumbDocument.canvasPresets[0]) }
                 .buttonStyle(.studioPrimary)
-                .keyboardShortcut("n", modifiers: .command)
         }
         .padding(.horizontal, Studio.Space.l)
         .frame(height: Studio.Metric.topBarHeight)

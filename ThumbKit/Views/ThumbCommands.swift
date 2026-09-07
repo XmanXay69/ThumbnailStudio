@@ -28,8 +28,11 @@ struct ThumbCommands: Commands {
 
         // MARK: File
         CommandGroup(replacing: .newItem) {
-            Button("New Design…") { actions?.newDesign() }
-                .keyboardShortcut("n", modifiers: .command)
+            Button("New Design…") {
+                if let handler = router.newDesignHandler { handler() }
+                else { actions?.newDesign() }
+            }
+            .keyboardShortcut("n", modifiers: .command)
         }
         CommandGroup(replacing: .saveItem) {
             Button("Save") { actions?.saveDesign() }

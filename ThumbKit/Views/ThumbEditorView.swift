@@ -39,9 +39,17 @@ struct ThumbEditorView: View {
         .studioWindowBackground()
         .onAppear {
             nameDraft = currentName
-            editor.onCloseDesign = onBack
-            editor.onNewDesign = onNewDesign
             refreshUndoState()
+        }
+        .onChange(of: editor.closeRequested) { _, wanted in
+            guard wanted else { return }
+            editor.closeRequested = false
+            onBack()
+        }
+        .onChange(of: editor.newDesignRequested) { _, wanted in
+            guard wanted else { return }
+            editor.newDesignRequested = false
+            onNewDesign()
         }
         .onChange(of: store.fileURL) { _, _ in nameDraft = currentName }
         // UndoManager publishes nothing SwiftUI observes, so mirror its state

@@ -2558,6 +2558,49 @@ do {
           shadowSpread(strokeWidth: 0) > 20, "\(shadowSpread(strokeWidth: 0)) dark pixels")
     check("stroked text casts one too", shadowSpread(strokeWidth: 8) > 20)
 
+    // A rounded or diagonally-cut image asked for a drop shadow and got a
+    // 1%-opacity one, because it was cast from a near-transparent fill.
+    func shadowedPixels(maskShape: String, cutEdge: String, shadow: Bool) -> Double {
+        var document = ThumbDocument()
+        document.width = 200
+        document.height = 200
+        document.backgroundHex = "FFFFFF"
+        var spec = ImageSpec(path: "/synthetic")
+        spec.maskShape = maskShape
+        spec.cutEdge = cutEdge
+        spec.shadowEnabled = shadow
+        spec.shadowHex = "000000"
+        spec.shadowBlur = 8
+        spec.shadowOffset = 6
+        document.layers = [ThumbLayer(kind: .image(spec), widthFraction: 0.5)]
+        let solid = NSImage(size: NSSize(width: 100, height: 100))
+        solid.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 100, height: 100).fill()
+        solid.unlockFocus()
+        guard let image = ThumbnailRenderer.render(document, provider: { _ in solid }),
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        // Grey pixels are shadow: not the white ground, not the red subject.
+        var grey = 0.0
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
+                guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                let r = colour.redComponent, g = colour.greenComponent, b = colour.blueComponent
+                if r < 0.92, abs(r - g) < 0.06, abs(g - b) < 0.06 { grey += 1 }
+            }
+        }
+        return grey
+    }
+    for (label, mask, cut) in [("a rounded image", "rounded", "none"),
+                               ("a circular image", "circle", "none"),
+                               ("a diagonally cut image", "none", "right")] {
+        let on = shadowedPixels(maskShape: mask, cutEdge: cut, shadow: true)
+        let off = shadowedPixels(maskShape: mask, cutEdge: cut, shadow: false)
+        check("\(label) casts a real drop shadow", on > off + 50,
+              "\(on) shadow pixels vs \(off) without")
+    }
+
     // A freshly lifted subject gets the treatment that separates it from the
     // background; a re-lift must not stomp what the user has since set.
     var fresh = ImageSpec(path: "/photo.png")
