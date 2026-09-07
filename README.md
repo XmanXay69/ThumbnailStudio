@@ -69,6 +69,24 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### The library
+
+⌘L, or the tool-rail button. Two sources, neither needing a catalogue you have
+to maintain:
+
+- **`~/Desktop/Thumbnail Studio/Assets`** — a folder in Finder, where a
+  subfolder is a tag. Same shape as the SFX library that already worked here:
+  no database to corrupt, no import step, and filing a logo is dragging it
+  into a folder.
+- **Used before** — every image your saved designs actually reference, newest
+  design first. That list maintains itself.
+
+Importing now *copies* the file into app-owned, content-addressed storage
+rather than pointing at wherever you dragged it from — so tidying your
+Downloads folder can no longer quietly empty a layer six weeks later. The same
+file imported twice costs one copy. A layer whose file has gone missing gets
+an amber badge in the layers list instead of silently drawing nothing.
+
 ### Text
 
 Font, weight, size, letter spacing, line height, alignment, all-caps, fill,

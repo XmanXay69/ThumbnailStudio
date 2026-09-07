@@ -98,8 +98,10 @@ extension ThumbnailStudioPane {
         if provider.canLoadObject(ofClass: URL.self) {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url, NSImage(contentsOf: url) != nil else { return }
+                // Copied in, for the same reason a picked file is.
+                let path = ThumbLibrary.adopt(url) ?? url.path
                 Task { @MainActor in
-                    addLayer(.image(ImageSpec(path: url.path)), at: point, action: "Add Image")
+                    addLayer(.image(ImageSpec(path: path)), at: point, action: "Add Image")
                 }
             }
             return true

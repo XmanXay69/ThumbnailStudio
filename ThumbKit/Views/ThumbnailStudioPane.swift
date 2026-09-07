@@ -28,6 +28,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var croppingLayerID: UUID?
     @State var showFramePicker = false
     @State var showExport = false
+    @State var showLibrary = false
     @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
@@ -137,6 +138,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                                    set: { showExport = $0; editor.exportRequested = $0 })) {
             ExportSheet(document: doc, image: canvasImage)
         }
+        .sheet(isPresented: $showLibrary) {
+            AssetLibrarySheet { path in
+                addLayer(.image(ImageSpec(path: path)), action: "Add Image")
+            }
+        }
         .sheet(isPresented: $showPreview) {
             PlatformPreviewSheet(document: doc, image: canvasImage, title: previewTitle)
         }
@@ -158,6 +164,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             StudioDivider().padding(.horizontal, Studio.Space.s)
             StudioIconButton("crop", help: "Crop & cut") { beginCrop() }
                 .disabled(!selectedIsImage)
+            StudioIconButton("photo.stack", help: "Library  ⌘L") { showLibrary = true }
             StudioIconButton("rectangle.on.rectangle.angled",
                              help: "Preview where it will be seen  ⌘P") {
                 showPreview = true
@@ -315,14 +322,19 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
 
     func addImageFile(at point: CGPoint? = nil) {
         guard let url = pickImage() else { return }
-        addLayer(.image(ImageSpec(path: url.path)), at: point, action: "Add Image")
+        // Adopted, not referenced: a design that points at wherever you dragged
+        // a file from breaks the day you tidy your Downloads folder. Storage is
+        // content-addressed, so importing the same file twice costs one copy.
+        let path = ThumbLibrary.adopt(url) ?? url.path
+        addLayer(.image(ImageSpec(path: path)), at: point, action: "Add Image")
     }
 
     func setImageFile(for layerID: UUID) {
         guard let url = pickImage() else { return }
+        let adopted = ThumbLibrary.adopt(url) ?? url.path
         mutateLayer(layerID, "Set Image") { layer in
             if case .image(var spec) = layer.kind {
-                spec.path = url.path
+                spec.path = adopted
                 spec.cutoutPath = nil
                 spec.useCutout = false
                 layer.kind = .image(spec)

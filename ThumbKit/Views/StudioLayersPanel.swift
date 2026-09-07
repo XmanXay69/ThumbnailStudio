@@ -55,6 +55,7 @@ extension ThumbnailStudioPane {
         Menu {
             Button("Text") { addText() }
             Button("Image file…") { addImageFile() }
+            Button("From library…") { showLibrary = true }
             if let frameSource {
                 Button("Frame at playhead") {
                     frameSource.grabFrameToCanvas(at: frameSource.playheadTime)
@@ -148,6 +149,13 @@ private struct LayerRow: View {
 
     @State private var hovering = false
 
+    /// An image layer whose file has gone renders as nothing at all, with no
+    /// error anywhere — you notice when the export comes out wrong.
+    private var isMissingFile: Bool {
+        guard case .image(let spec) = layer.kind, !spec.effectivePath.isEmpty else { return false }
+        return !FileManager.default.fileExists(atPath: spec.effectivePath)
+    }
+
     var body: some View {
         HStack(spacing: Studio.Space.s) {
             LayerThumbnail(layer: layer, document: document)
@@ -157,6 +165,12 @@ private struct LayerRow: View {
                 .foregroundStyle(layer.isVisible
                                  ? Studio.Palette.textPrimary : Studio.Palette.textTertiary)
                 .lineLimit(1)
+            if isMissingFile {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(Studio.Typo.iconSmall)
+                    .foregroundStyle(Studio.Palette.warning)
+                    .help("This image file is missing — the layer draws nothing")
+            }
             Spacer(minLength: 0)
             if hovering || !layer.isVisible {
                 StudioIconButton(layer.isVisible ? "eye" : "eye.slash",

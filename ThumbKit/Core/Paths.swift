@@ -37,6 +37,17 @@ enum Paths {
         appSupport.appendingPathComponent("ThumbLab", isDirectory: true)
     }
 
+    /// Your own images, organised in Finder rather than in a database.
+    ///
+    /// Same shape as the SFX library that already works in this codebase: a
+    /// folder you can see, where a subfolder is a tag. Dropping a logo into
+    /// "Logos" is the whole filing system, and it survives the app being
+    /// rewritten around it.
+    static var assetsRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop/Thumbnail Studio/Assets", isDirectory: true)
+    }
+
     /// The sound-effect library. On the Desktop for the same reason as
     /// Clips: drop files (or folders — a folder becomes a tag) in Finder
     /// and they appear in the editor's SFX panel.
@@ -145,7 +156,7 @@ enum Paths {
     /// What the standalone Thumbnail Studio needs — no Clips, no SFX, no
     /// Projects folder, so a design-only app doesn't litter the Desktop.
     static func ensureThumbDirectories() {
-        for dir in [appSupport, thumbTemplatesRoot, thumbLabRoot] {
+        for dir in [appSupport, thumbTemplatesRoot, thumbLabRoot, assetsRoot] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }

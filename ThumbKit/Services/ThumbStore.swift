@@ -252,7 +252,7 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
     }
 
     /// Every design in the lab, newest first.
-    static func designs() -> [Design] {
+    nonisolated static func designs() -> [Design] {
         let fm = FileManager.default
         let urls = (try? fm.contentsOfDirectory(at: Paths.thumbLabRoot,
                                                 includingPropertiesForKeys: [.contentModificationDateKey]))

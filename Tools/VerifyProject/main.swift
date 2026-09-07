@@ -2556,6 +2556,65 @@ do {
     _ = base
 }
 
+section("Asset library")
+do {
+    let fm = FileManager.default
+    let root = Paths.assetsRoot
+    try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+    let logos = root.appendingPathComponent("VerifyLogos")
+    try? fm.createDirectory(at: logos, withIntermediateDirectories: true)
+
+    func writePNG(_ url: URL, white: CGFloat) {
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        NSColor(calibratedWhite: white, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        image.unlockFocus()
+        if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: url)
+        }
+    }
+    let loose = root.appendingPathComponent("verify-loose.png")
+    let tagged = logos.appendingPathComponent("verify-tagged.png")
+    let notAnImage = root.appendingPathComponent("verify-notes.txt")
+    writePNG(loose, white: 0.2)
+    writePNG(tagged, white: 0.8)
+    try? Data("not an image".utf8).write(to: notAnImage)
+
+    let found = ThumbLibrary.folderAssets()
+    check("a loose file is found", found.contains { $0.path == loose.path })
+    check("a file in a subfolder is found", found.contains { $0.path == tagged.path })
+    check("the subfolder becomes its tag",
+          found.first { $0.path == tagged.path }?.tag == "VerifyLogos")
+    check("a loose file has no tag", found.first { $0.path == loose.path }?.tag == nil)
+    check("non-images are ignored", !found.contains { $0.path == notAnImage.path })
+    check("tags are listed", ThumbLibrary.tags(in: found).contains("VerifyLogos"))
+
+    // Adopting copies into app-owned, content-addressed storage: the whole
+    // point is that a design stops depending on where you dragged a file from.
+    let adopted = ThumbLibrary.adopt(loose)
+    check("adopting returns a path", adopted != nil)
+    check("the copy lives in the app's own folder",
+          (adopted ?? "").contains("ThumbAssets"), adopted ?? "")
+    check("the copy exists", fm.fileExists(atPath: adopted ?? ""))
+    check("adopting the same file twice reuses one copy",
+          ThumbLibrary.adopt(loose) == adopted)
+    check("a different file adopts to a different path",
+          ThumbLibrary.adopt(tagged) != adopted)
+    check("adopting something unreadable fails rather than inventing a path",
+          ThumbLibrary.adopt(root.appendingPathComponent("nope.png")) == nil)
+
+    // `all()` must not list the same file twice when a design uses a filed one.
+    let combined = ThumbLibrary.all()
+    check("nothing appears twice", combined.count == Set(combined.map(\.path)).count)
+
+    try? fm.removeItem(at: loose)
+    try? fm.removeItem(at: notAnImage)
+    try? fm.removeItem(at: logos)
+    if let adopted { try? fm.removeItem(atPath: adopted) }
+}
+
 section("Text engine")
 do {
     // The bug this replaced: the default font was hardcoded to "Anton", which
