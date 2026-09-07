@@ -84,6 +84,14 @@ struct ThumbLabView: View {
             }
             .focusable()
             .focused($gridFocused)
+            // Focus starts on the grid, not in the search field: otherwise
+            // the window opens with the search box lit up, and the arrow keys
+            // that walk the designs have nowhere to land. Deferred a turn —
+            // writing focus state *during* the appear pass invalidates the
+            // view tree and takes the grid's in-flight preview renders with
+            // it, which is how the gallery ended up showing empty cards.
+            .defaultFocus($gridFocused, true)
+            .onAppear { Task { @MainActor in gridFocused = true } }
             .onKeyPress(.delete) { deleteSelected() }
             .onKeyPress(.deleteForward) { deleteSelected() }
             .onKeyPress(.return) { openSelected() }
