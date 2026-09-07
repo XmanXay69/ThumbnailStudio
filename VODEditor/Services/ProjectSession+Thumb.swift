@@ -38,4 +38,27 @@ struct ProjectFrameSource: ThumbFrameSource {
     func addFrameToCanvas(path: String, time: Double) {
         session.addSourceGrabToCanvas(path: path, time: time)
     }
+
+    /// The middle of each of the strongest clip candidates. The middle rather
+    /// than the start because a candidate opens on the run-up to the thing,
+    /// not the thing.
+    var suggestedMoments: [Double] {
+        session.shorts
+            .sorted { $0.score > $1.score }
+            .prefix(6)
+            .map { ($0.start + $0.end) / 2 }
+    }
+
+    func rankedFrames(around moments: [Double]) async throws -> [RankedFramePick] {
+        try? session.project.paths.createDirectories()
+        let ranked = try await ThumbnailService.bestFrames(
+            source: session.project.sourceURL,
+            around: moments,
+            into: session.project.paths.thumbnailsDir)
+        return ranked.map {
+            RankedFramePick(time: $0.time, path: $0.url.path,
+                            score: $0.quality.overall,
+                            explanation: $0.quality.explanation)
+        }
+    }
 }

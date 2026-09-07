@@ -30,4 +30,33 @@ protocol ThumbFrameSource {
 
     /// Adds an already-written image file to the canvas as a layer.
     func addFrameToCanvas(path: String, time: Double)
+
+    /// Moments the host already believes are interesting — clip candidates,
+    /// score peaks. Empty when there is no analysis to draw on, which is the
+    /// standalone studio's permanent state.
+    var suggestedMoments: [Double] { get }
+
+    /// Extracts frames around those moments and returns them best-first.
+    /// Long-running: it shells out to ffmpeg once per sample.
+    func rankedFrames(around moments: [Double]) async throws -> [RankedFramePick]
+}
+
+/// One frame the host offered, with the measurement that ranked it.
+struct RankedFramePick: Identifiable, Equatable {
+    var id: String { path }
+    var time: Double
+    var path: String
+    /// 0…1, from `FrameQuality.overall`.
+    var score: Double
+    /// The one-line reason it placed where it did.
+    var explanation: String
+
+    var url: URL { URL(fileURLWithPath: path) }
+}
+
+extension ThumbFrameSource {
+    /// A host with no analysis simply offers nothing, and the picker hides the
+    /// strip rather than showing an empty one.
+    var suggestedMoments: [Double] { [] }
+    func rankedFrames(around moments: [Double]) async throws -> [RankedFramePick] { [] }
 }
