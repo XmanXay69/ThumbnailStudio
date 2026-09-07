@@ -61,6 +61,7 @@ swiftc -O -o "$BIN" \
   VODEditor/Services/AutoClipService.swift \
   VODEditor/Models/PlatformPreset.swift \
   VODEditor/Services/SocialOverlayRenderer.swift \
+  ThumbKit/Models/ThumbFonts.swift \
   ThumbKit/Models/ThumbDocument.swift \
   ThumbKit/Models/NormalizedRect.swift \
   ThumbKit/Models/ThumbEditing.swift \

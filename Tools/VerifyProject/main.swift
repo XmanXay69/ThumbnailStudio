@@ -2556,6 +2556,75 @@ do {
     _ = base
 }
 
+section("Text engine")
+do {
+    // The bug this replaced: the default font was hardcoded to "Anton", which
+    // is not installed on this machine, so every text layer claimed Anton in
+    // the inspector and drew system heavy on the canvas.
+    check("the default font is one that actually exists",
+          ThumbFonts.isInstalled(TextSpec().fontName), TextSpec().fontName)
+    check("every offered pick is installed",
+          ThumbFonts.picks.allSatisfy { ThumbFonts.isInstalled($0) },
+          ThumbFonts.picks.joined(separator: ", "))
+    check("there is always at least one pick", !ThumbFonts.picks.isEmpty)
+
+    // A missing font is reported, not silently substituted.
+    var missing = TextSpec()
+    missing.fontName = "Definitely Not A Real Font"
+    check("a missing font is reported", ThumbFonts.substitution(for: missing) != nil)
+    check("an installed font reports nothing",
+          ThumbFonts.substitution(for: TextSpec()) == nil)
+    check("a missing font still resolves to something drawable",
+          ThumbFonts.font(for: missing, size: 40).pointSize == 40)
+
+    // Faces within a family, heaviest first.
+    let faces = ThumbFonts.faces(in: "Avenir Next")
+    check("a family reports its faces", faces.count > 1, "\(faces.count)")
+    check("no italics in the face list",
+          !faces.contains { $0.lowercased().contains("italic") })
+
+    // All-caps is applied where the text is rendered, so measurement and
+    // drawing cannot disagree.
+    var caps = TextSpec(text: "doomsday heist")
+    check("lowercase passes through when the toggle is off",
+          caps.renderedText == "doomsday heist")
+    caps.uppercase = true
+    check("all caps uppercases the rendered text",
+          caps.renderedText == "DOOMSDAY HEIST")
+    check("but leaves the editable text alone", caps.text == "doomsday heist")
+
+    // The two controls that were dead model surface must actually reach pixels.
+    func width(_ spec: TextSpec) -> Double {
+        var doc = ThumbDocument()
+        doc.width = 640; doc.height = 360
+        doc.layers = [ThumbLayer(kind: .text(spec), widthFraction: 0.9)]
+        let bounds = ThumbnailRenderer.drawnBounds(
+            doc.layers[0], in: CGSize(width: 640, height: 360), provider: { _ in nil })
+        return Double(bounds.width)
+    }
+    var lower = TextSpec(text: "doomsday heist")
+    lower.sizeFraction = 0.15
+    var upper = lower
+    upper.uppercase = true
+    check("all caps changes the drawn width", abs(width(upper) - width(lower)) > 0.005,
+          String(format: "%.3f vs %.3f", width(upper), width(lower)))
+
+    func height(_ spec: TextSpec) -> Double {
+        var doc = ThumbDocument()
+        doc.width = 640; doc.height = 360
+        let layer = ThumbLayer(kind: .text(spec), widthFraction: 0.5)
+        return ThumbnailRenderer.drawnHeightFraction(
+            layer, in: CGSize(width: 640, height: 360), provider: { _ in nil })
+    }
+    var tight = TextSpec(text: "one two three four five six seven eight")
+    tight.sizeFraction = 0.1
+    tight.lineHeightMultiple = 1.0
+    var loose = tight
+    loose.lineHeightMultiple = 1.8
+    check("line height changes the drawn height", height(loose) > height(tight) + 0.01,
+          String(format: "%.3f vs %.3f", height(loose), height(tight)))
+}
+
 section("Custom canvas size")
 do {
     check("a sensible size passes through", ThumbDocument.clampedDimension(1600) == 1600)
@@ -2626,6 +2695,10 @@ do {
     headline.width = 1280; headline.height = 720
     var wide = TextSpec(text: "Doomsday Heist")
     wide.sizeFraction = 0.16
+    // Pinned to a font that is always present, because this checks the overlap
+    // maths and not the metrics of whatever the default happens to be. It used
+    // to inherit the default, so changing that default broke it.
+    wide.fontName = NSFont.systemFont(ofSize: 12, weight: .heavy).familyName ?? "Helvetica"
     headline.layers = [ThumbLayer(kind: .text(wide), x: 0.5, y: 0.785, widthFraction: 0.85)]
     check("a headline whose ink reaches the stamp is flagged",
           ThumbLegibility.report(for: headline).layersUnderDurationStamp == 1)

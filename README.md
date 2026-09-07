@@ -69,6 +69,24 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Text
+
+Font, weight, size, letter spacing, line height, alignment, all-caps, fill,
+gradient, stroke, shadow and a highlight box. Alignment and line height were
+already honoured by the renderer and had no control at all — dead model
+surface that read as missing features.
+
+The font list only offers what is installed. It used to offer Anton, Bangers
+and Montserrat, none of which are on this Mac, and default to Anton — so the
+inspector said Anton while the canvas quietly drew the system heavy face. A
+font that is not installed is now flagged in the inspector rather than
+silently substituted, and the default is resolved at run time from what is
+actually there.
+
+All-caps is a toggle rather than a retype, so the words stay editable. It is
+applied where the text is rendered, so the drawn glyphs, the measured bounds
+and the selection box can never disagree about it.
+
 ### Grading a frame
 
 Thirteen adjustments, in the order a photo editor applies them: exposure and

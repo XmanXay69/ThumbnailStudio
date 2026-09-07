@@ -262,6 +262,48 @@ extension ThumbnailStudioPane {
                 StudioRow("Font") {
                     StudioFontMenu(selection: textBinding(id, spec, \.fontName, "Font"))
                 }
+                // Only offered when the family actually has faces to choose
+                // between, which most system families do and most single-face
+                // display fonts do not.
+                let faces = ThumbFonts.faces(in: spec.fontName)
+                if faces.count > 1 {
+                    StudioRow("Weight") {
+                        Menu {
+                            ForEach(faces, id: \.self) { face in
+                                Button(face) {
+                                    mutateText(id, "Font Weight") { $0.fontFace = face }
+                                }
+                            }
+                        } label: {
+                            Text(spec.fontFace ?? faces.first ?? "Regular")
+                                .font(Studio.Typo.body)
+                                .lineLimit(1)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(height: Studio.Metric.controlS)
+                    }
+                }
+                if let note = ThumbFonts.substitution(for: spec) {
+                    Text(note)
+                        .font(Studio.Typo.caption)
+                        .foregroundStyle(Studio.Palette.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // Both of these were honoured by the renderer already and had
+                // no control anywhere — dead model surface.
+                StudioRow("Align") {
+                    StudioSegmented(selection: textBinding(id, spec, \.alignment, "Text Align"),
+                                    options: [("left", "Left"), ("center", "Centre"),
+                                              ("right", "Right")])
+                }
+                StudioRow("Line height") {
+                    StudioValueSlider(
+                        value: textBinding(id, spec, \.lineHeightMultiple, "Line Height"),
+                        in: 0.6...2.0) { String(format: "%.2f×", $0) }
+                }
+                Toggle("All caps", isOn: textBinding(id, spec, \.uppercase, "All Caps"))
+                    .toggleStyle(.checkbox)
+                    .font(Studio.Typo.body)
                 StudioRow("Size") {
                     StudioValueSlider(value: textBinding(id, spec, \.sizeFraction, "Text Size"),
                                       in: 0.04...0.4) { "\(Int($0 * Double(doc.height))) px" }
@@ -527,17 +569,16 @@ struct StudioSizeMenu: View {
     }
 }
 
-/// Font picking, with the faces that actually work on a thumbnail first.
+/// Font picking. Only lists what is installed — offering a font the renderer
+/// cannot draw is how the inspector ended up claiming "Anton" while the canvas
+/// drew system heavy.
 struct StudioFontMenu: View {
     @Binding var selection: String
-
-    private static let picks = ["Anton", "Impact", "Bangers", "Montserrat",
-                                "Arial Black", "Avenir Next Heavy"]
 
     var body: some View {
         Menu {
             Section("Thumbnail picks") {
-                ForEach(Self.picks, id: \.self) { name in
+                ForEach(ThumbFonts.picks, id: \.self) { name in
                     Button(name) { selection = name }
                 }
             }
@@ -547,7 +588,11 @@ struct StudioFontMenu: View {
                 }
             }
         } label: {
-            Text(selection).font(Studio.Typo.body).lineLimit(1)
+            Text(selection)
+                .font(Studio.Typo.body)
+                .foregroundStyle(ThumbFonts.isInstalled(selection)
+                                 ? Studio.Palette.textPrimary : Studio.Palette.warning)
+                .lineLimit(1)
         }
         .menuStyle(.borderlessButton)
         .frame(height: Studio.Metric.controlS)

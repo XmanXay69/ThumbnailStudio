@@ -310,7 +310,16 @@ struct ImageSpec: Codable, Equatable {
 /// Text — the big thumbnail kind: heavy face, hard stroke, optional gradient.
 struct TextSpec: Codable, Equatable {
     var text: String = "TEXT"
-    var fontName: String = "Anton"
+    /// A family name. The default is resolved at run time from what is
+    /// actually installed — hardcoding "Anton" meant the inspector claimed a
+    /// font the renderer could not draw.
+    var fontName: String = ThumbFonts.defaultFamily
+    /// A face within that family — "Black", "Condensed Heavy". nil takes the
+    /// family's own default.
+    var fontFace: String?
+    /// Thumbnail text is usually set in caps; doing it here rather than making
+    /// the user retype means the words stay editable.
+    var uppercase: Bool = false
     /// Font size as a fraction of canvas height.
     var sizeFraction: Double = 0.16
     var letterSpacing: Double = 0
@@ -334,13 +343,19 @@ struct TextSpec: Codable, Equatable {
 
     init(text: String = "TEXT") { self.text = text }
 
+    /// What actually gets drawn. Uppercasing lives here so the renderer, the
+    /// measurement and the hit box can never disagree about it.
+    var renderedText: String { uppercase ? text.uppercased() : text }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
             ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
         }
         text = value(.text, "TEXT")
-        fontName = value(.fontName, "Anton")
+        fontName = value(.fontName, ThumbFonts.defaultFamily)
+        fontFace = try? container.decodeIfPresent(String.self, forKey: .fontFace)
+        uppercase = value(.uppercase, false)
         sizeFraction = value(.sizeFraction, 0.16)
         letterSpacing = value(.letterSpacing, 0)
         lineHeightMultiple = value(.lineHeightMultiple, 1)

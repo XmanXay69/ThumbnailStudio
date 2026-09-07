@@ -83,10 +83,10 @@ enum ThumbnailRenderer {
         case .shape:
             return layer.heightFraction
         case .text(let spec):
-            guard !spec.text.isEmpty, size.height > 0 else { return layer.heightFraction }
+            guard !spec.renderedText.isEmpty, size.height > 0 else { return layer.heightFraction }
             let width = layer.widthFraction * size.width
             let measured = NSAttributedString(
-                string: spec.text,
+                string: spec.renderedText,
                 attributes: textAttributes(spec, canvasHeight: size.height, strokePass: false))
                 .boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
                               options: [.usesLineFragmentOrigin])
@@ -117,10 +117,10 @@ enum ThumbnailRenderer {
         var width = layer.widthFraction
 
         if case .text(let spec) = layer.kind,
-           !spec.text.isEmpty, size.width > 0 {
+           !spec.renderedText.isEmpty, size.width > 0 {
             let wrap = layer.widthFraction * size.width
             let measured = NSAttributedString(
-                string: spec.text,
+                string: spec.renderedText,
                 attributes: textAttributes(spec, canvasHeight: size.height, strokePass: false))
                 .boundingRect(with: NSSize(width: wrap, height: .greatestFiniteMagnitude),
                               options: [.usesLineFragmentOrigin])
@@ -341,8 +341,7 @@ enum ThumbnailRenderer {
     static func textAttributes(_ spec: TextSpec, canvasHeight: CGFloat,
                                strokePass: Bool) -> [NSAttributedString.Key: Any] {
         let fontSize = spec.sizeFraction * canvasHeight
-        let font = NSFont(name: spec.fontName, size: fontSize)
-            ?? NSFont.systemFont(ofSize: fontSize, weight: .heavy)
+        let font = ThumbFonts.font(for: spec, size: fontSize)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = spec.alignment == "left" ? .left
             : spec.alignment == "right" ? .right : .center
@@ -365,7 +364,7 @@ enum ThumbnailRenderer {
 
     private static func drawText(_ spec: TextSpec, layer: ThumbLayer, in size: CGSize,
                                  center: CGPoint) {
-        let text = spec.text
+        let text = spec.renderedText
         guard !text.isEmpty else { return }
         let width = layer.widthFraction * size.width
         let measured = NSAttributedString(
