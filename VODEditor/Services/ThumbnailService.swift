@@ -37,16 +37,9 @@ enum ThumbnailService {
         let ffmpeg = try FFmpegService()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        // Milliseconds, not seconds: dense sampling puts several candidates
-        // inside the same second, and an integer-second name silently
-        // overwrote all but the last of them.
-        func destination(for time: Double) -> URL {
-            directory.appendingPathComponent(
-                String(format: "frame_%09d.jpg", Int((max(0, time) * 1000).rounded())))
-        }
-
-        func extract(at time: Double) async throws -> URL {
-            let url = destination(for: time)
+        var urls: [URL] = []
+        for (index, time) in times.enumerated() {
+            let url = directory.appendingPathComponent(String(format: "frame_%04d.jpg", Int(time)))
             var arguments = [
                 "-nostdin", "-hide_banner", "-loglevel", "error",
                 "-ss", String(format: "%.3f", max(0, time)),
@@ -60,83 +53,10 @@ enum ThumbnailService {
                 "-y", url.path,
             ]
             try await Shell.runChecked(ffmpeg.ffmpeg, arguments: arguments)
-            return url
+            urls.append(url)
+            onProgress(Double(index + 1) / Double(max(1, times.count)))
         }
-
-        // A few at a time. Each extraction is a keyframe seek plus one decode,
-        // so they are independent; running them strictly serially made dense
-        // sampling (dozens of frames per moment) unusably slow. Bounded
-        // because an unbounded group would spawn one ffmpeg per frame.
-        let lanes = min(4, max(1, ProcessInfo.processInfo.activeProcessorCount / 2))
-        var urls = [URL?](repeating: nil, count: times.count)
-        var completed = 0
-        try await withThrowingTaskGroup(of: (Int, URL).self) { group in
-            var next = 0
-            func submit() {
-                guard next < times.count else { return }
-                let index = next
-                let time = times[index]
-                next += 1
-                group.addTask { (index, try await extract(at: time)) }
-            }
-            for _ in 0..<min(lanes, times.count) { submit() }
-            while let (index, url) = try await group.next() {
-                urls[index] = url
-                completed += 1
-                onProgress(Double(completed) / Double(max(1, times.count)))
-                submit()
-            }
-        }
-        return urls.compactMap { $0 }
-    }
-
-    /// A frame the ranker looked at, with the measurement that placed it.
-    struct RankedFrame: Identifiable, Equatable {
-        var id: String { url.path }
-        var time: Double
-        var url: URL
-        var quality: FrameQuality
-    }
-
-    /// The best frames *around* a set of interesting moments.
-    ///
-    /// The moment finder says when something happened; it says nothing about
-    /// whether the single frame sitting on that second is worth looking at.
-    /// The funniest second of a stream is regularly a motion-blurred shot of
-    /// the back of someone's head. So sample a spread around each moment and
-    /// let `FrameQuality` pick.
-    static func bestFrames(source: URL,
-                           around moments: [Double],
-                           spread: Double = 1.2,
-                           samplesPerMoment: Int = 5,
-                           keeping keep: Int = 12,
-                           into directory: URL,
-                           onProgress: @escaping (Double) -> Void = { _ in })
-        async throws -> [RankedFrame] {
-        guard !moments.isEmpty, samplesPerMoment > 0 else { return [] }
-
-        let times = FrameSampling.times(around: moments, spread: spread,
-                                        samplesPerMoment: samplesPerMoment)
-        guard !times.isEmpty else { return [] }
-
-        let urls = try await extractFrames(source: source, times: times,
-                                           into: directory, onProgress: onProgress)
-
-        // Scoring is CPU-bound and independent per frame.
-        let scored: [RankedFrame] = await withTaskGroup(of: RankedFrame?.self) { group in
-            for (index, url) in urls.enumerated() {
-                let time = index < times.count ? times[index] : 0
-                group.addTask {
-                    guard let quality = FrameQualityScorer.score(imageAt: url) else { return nil }
-                    return RankedFrame(time: time, url: url, quality: quality)
-                }
-            }
-            var out: [RankedFrame] = []
-            for await frame in group { if let frame { out.append(frame) } }
-            return out
-        }
-
-        return Array(scored.sorted { $0.quality.overall > $1.quality.overall }.prefix(keep))
+        return urls
     }
 
     /// Renders the draft onto a background at the given size.

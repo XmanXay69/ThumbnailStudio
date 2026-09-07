@@ -135,12 +135,9 @@ struct ExportSheet: View {
     }
 }
 
-/// Pick a frame: the best ones the app can find, or scrub for yourself.
-///
-/// The strip is the point. The app already knows which moments matter, and
-/// `FrameQuality` knows which frame within a moment is worth looking at, so
-/// the common case should be picking from six good frames rather than
-/// dragging a slider across four hours hoping to land on one.
+/// Scrub the source and grab the exact frame — the reason this studio is
+/// in-house instead of Canva. It talks to a `ThumbFrameSource`, so it knows
+/// nothing about projects, sessions or players.
 struct FramePickerSheet: View {
     let source: any ThumbFrameSource
     @Environment(\.dismiss) private var dismiss
@@ -148,163 +145,12 @@ struct FramePickerSheet: View {
     @State private var time: Double = 0
     @State private var preview: NSImage?
     @State private var loading = false
-    @State private var ranked: [RankedFramePick] = []
-    @State private var findingBest = false
-    @State private var searchFailed: String?
-    @State private var selected: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Pick a frame")
-                    .font(Studio.Typo.title)
-                    .foregroundStyle(Studio.Palette.textPrimary)
-                Spacer()
-                Text(source.frameSourceDuration.timecode)
-                    .font(Studio.Typo.numeric)
-                    .foregroundStyle(Studio.Palette.textTertiary)
-            }
-            .padding(.horizontal, Studio.Space.l)
-            .frame(height: Studio.Metric.topBarHeight)
-            .background(Studio.Palette.panel)
-            StudioDivider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: Studio.Space.l) {
-                    bestStrip
-                    scrubber
-                }
-                .padding(Studio.Space.l)
-            }
-
-            StudioDivider()
-            HStack {
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.studio(.secondary, .large))
-                Spacer()
-                Button("Add to canvas") { addScrubbed() }
-                    .buttonStyle(.studio(.primary, .large))
-            }
-            .padding(Studio.Space.l)
-            .background(Studio.Palette.panel)
-        }
-        .frame(width: 720, height: 660)
-        .studioWindowBackground()
-        .onAppear {
-            time = source.frameSourceDuration / 2
-            loadPreview()
-        }
-    }
-
-    // MARK: - The ranked strip
-
-    @ViewBuilder
-    private var bestStrip: some View {
-        let moments = source.suggestedMoments
-        if !moments.isEmpty {
-            VStack(alignment: .leading, spacing: Studio.Space.s) {
-                HStack(spacing: Studio.Space.s) {
-                    Text("Best frames")
-                        .font(Studio.Typo.section)
-                        .foregroundStyle(Studio.Palette.textTertiary)
-                    Spacer()
-                    if findingBest {
-                        ProgressView().controlSize(.small)
-                        Text("Sampling \(moments.count) moments…")
-                            .font(Studio.Typo.caption)
-                            .foregroundStyle(Studio.Palette.textTertiary)
-                    } else if ranked.isEmpty {
-                        Button("Find best frames") { findBest(moments) }
-                            .buttonStyle(.studio(.secondary, .small))
-                    } else {
-                        Button("Search again") { findBest(moments) }
-                            .buttonStyle(.studio(.ghost, .small))
-                    }
-                }
-
-                if let searchFailed {
-                    Text(searchFailed)
-                        .font(Studio.Typo.caption)
-                        .foregroundStyle(Studio.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if ranked.isEmpty, !findingBest {
-                    Text("Samples a spread of frames around your strongest clips and ranks them by face size, sharpness and contrast. Takes a few seconds.")
-                        .font(Studio.Typo.caption)
-                        .foregroundStyle(Studio.Palette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 240),
-                                                 spacing: Studio.Space.m)],
-                              spacing: Studio.Space.m) {
-                        ForEach(ranked) { pick in
-                            rankedCard(pick)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func rankedCard(_ pick: RankedFramePick) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ZStack {
-                Studio.Palette.windowBackground
-                if let image = NSImage(contentsOfFile: pick.path) {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                }
-            }
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            VStack(alignment: .leading, spacing: Studio.Space.xxs) {
-                HStack(spacing: Studio.Space.xs) {
-                    Text(pick.time.timecode)
-                        .font(Studio.Typo.numeric)
-                        .foregroundStyle(Studio.Palette.textSecondary)
-                    Spacer()
-                    Text("\(Int(pick.score * 100))")
-                        .font(Studio.Typo.numeric)
-                        .foregroundStyle(pick.score > 0.5 ? Studio.Palette.success
-                                                          : Studio.Palette.textTertiary)
-                }
-                Text(pick.explanation)
-                    .font(Studio.Typo.caption)
-                    .foregroundStyle(Studio.Palette.textTertiary)
-                    .lineLimit(1)
-            }
-            .padding(Studio.Space.s)
-        }
-        .studioSelectable(isSelected: selected == pick.id)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selected = pick.id
-            source.addFrameToCanvas(path: pick.path, time: pick.time)
-            dismiss()
-        }
-        .help("\(pick.explanation) — click to add")
-    }
-
-    private func findBest(_ moments: [Double]) {
-        findingBest = true
-        searchFailed = nil
-        Task {
-            do {
-                ranked = try await source.rankedFrames(around: moments)
-                if ranked.isEmpty {
-                    searchFailed = "No frames came back — the source may not be reachable."
-                }
-            } catch {
-                searchFailed = error.localizedDescription
-            }
-            findingBest = false
-        }
-    }
-
-    // MARK: - Manual scrubbing, for when you know the moment yourself
-
-    private var scrubber: some View {
-        VStack(alignment: .leading, spacing: Studio.Space.s) {
-            Text("Or scrub")
-                .font(Studio.Typo.section)
-                .foregroundStyle(Studio.Palette.textTertiary)
+        VStack(spacing: Studio.Space.m) {
+            Text("Pick a frame")
+                .font(Studio.Typo.title)
+                .foregroundStyle(Studio.Palette.textPrimary)
             ZStack {
                 Studio.Palette.windowBackground
                 if let preview {
@@ -313,7 +159,6 @@ struct FramePickerSheet: View {
                     ProgressView()
                 }
             }
-            .frame(height: 220)
             .clipShape(RoundedRectangle(cornerRadius: Studio.Radius.card, style: .continuous))
             HStack(spacing: Studio.Space.s) {
                 Slider(value: $time, in: 0...max(1, source.frameSourceDuration)) { editing in
@@ -324,15 +169,26 @@ struct FramePickerSheet: View {
                     .font(Studio.Typo.numeric)
                     .foregroundStyle(Studio.Palette.textSecondary)
             }
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.studio(.secondary, .large))
+                Spacer()
+                Button("Add to canvas") {
+                    Task {
+                        let destination = source.frameGrabDestination(at: time)
+                        try? await source.writeSourceFrame(at: time, to: destination)
+                        source.addFrameToCanvas(path: destination.path, time: time)
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.studio(.primary, .large))
+            }
         }
-    }
-
-    private func addScrubbed() {
-        Task {
-            let destination = source.frameGrabDestination(at: time)
-            try? await source.writeSourceFrame(at: time, to: destination)
-            source.addFrameToCanvas(path: destination.path, time: time)
-            dismiss()
+        .padding(Studio.Space.l)
+        .studioWindowBackground()
+        .onAppear {
+            time = source.frameSourceDuration / 2
+            loadPreview()
         }
     }
 

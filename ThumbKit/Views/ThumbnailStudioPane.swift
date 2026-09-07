@@ -130,6 +130,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .sheet(isPresented: $showFramePicker) {
             if let frameSource {
                 FramePickerSheet(source: frameSource)
+                    .frame(width: 640, height: 480)
             }
         }
         .sheet(isPresented: Binding(get: { showExport || editor.exportRequested },
