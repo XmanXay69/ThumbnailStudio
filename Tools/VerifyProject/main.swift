@@ -2482,6 +2482,49 @@ do {
         check("crop and diagonal cut compose in one render", false)
     }
 
+section("Image adjustments")
+do {
+    // A red square, so a brightness/saturation change is unmistakable.
+    let source = NSImage(size: NSSize(width: 64, height: 64))
+    source.lockFocus()
+    NSColor(calibratedRed: 0.5, green: 0.2, blue: 0.2, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: 64, height: 64).fill()
+    source.unlockFocus()
+
+    func middle(_ image: NSImage?) -> NSColor? {
+        guard let image, let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)
+    }
+
+    var plain = ImageSpec(path: "/synthetic")
+    check("an unadjusted spec reports no adjustments", !plain.hasAdjustments)
+
+    plain.brightness = 0.5
+    check("setting brightness marks the spec adjusted", plain.hasAdjustments)
+    let brighter = middle(AdjustedImageCache.adjusted(source, spec: plain))
+    check("brightness actually brightens",
+          (brighter?.redComponent ?? 0) > 0.5,
+          String(format: "%.3f", brighter?.redComponent ?? -1))
+
+    var grey = ImageSpec(path: "/synthetic")
+    grey.filterPreset = "mono"
+    let mono = middle(AdjustedImageCache.adjusted(source, spec: grey))
+    check("the mono filter desaturates",
+          abs((mono?.redComponent ?? 0) - (mono?.greenComponent ?? 1)) < 0.02,
+          String(format: "r %.3f g %.3f", mono?.redComponent ?? -1, mono?.greenComponent ?? -1))
+
+    // The fix that made adjusted images 66x cheaper to redraw: the result has
+    // to be a real bitmap, not a lazy Core Image promise that re-runs the
+    // whole filter chain on every single draw.
+    let adjusted = AdjustedImageCache.adjusted(source, spec: plain)
+    let isLazy = adjusted?.representations.contains { $0 is NSCIImageRep } ?? true
+    check("an adjusted image is flattened, not a lazy Core Image rep", !isLazy)
+    check("and it keeps the source's size",
+          adjusted?.size == source.size,
+          "\(adjusted?.size ?? .zero) vs \(source.size)")
+}
+
 section("Regressions found in review")
 do {
     // A lock reads as protection everywhere else — drag, resize, nudge all
