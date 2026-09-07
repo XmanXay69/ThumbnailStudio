@@ -183,16 +183,15 @@ extension ThumbnailStudioPane {
             .position(point)
             .gesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    let proposed = max(0.03,
-                        layer.widthFraction + Double(value.translation.width) / canvasWidth)
-                    resizeDraft = (layer.id, proposed)
+                    resizeDraft = (layer.id,
+                                   CanvasResize.proposedWidth(from: layer,
+                                                              translationX: value.translation.width,
+                                                              canvasWidth: canvasWidth))
                 }
                 .onEnded { _ in
                     guard let draft = resizeDraft else { return }
                     mutateLayer(layer.id, "Resize Layer") {
-                        $0.heightFraction = $0.heightFraction * draft.width
-                            / max(0.01, $0.widthFraction)
-                        $0.widthFraction = draft.width
+                        CanvasResize.applying(width: draft.width, to: &$0)
                     }
                     resizeDraft = nil
                 })
@@ -204,31 +203,15 @@ extension ThumbnailStudioPane {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
                 if !selection.contains(layer.id) { select(layer.id) }
-                var dx = Double(value.translation.width) / Double(width)
-                var dy = Double(value.translation.height) / Double(height)
-                guideX = nil
-                guideY = nil
-                // Snapping only makes sense against a single dragged layer;
-                // with several, the group's own shape is what matters.
-                if selection.count <= 1 {
-                    var targetsX: [Double] = [0.5]
-                    var targetsY: [Double] = [0.5]
-                    for other in doc.layers where other.id != layer.id {
-                        targetsX.append(other.x)
-                        targetsY.append(other.y)
-                    }
-                    if let snapped = TimelineSnap.snapped(layer.x + dx, to: targetsX,
-                                                          threshold: 0.012) {
-                        dx = snapped - layer.x
-                        guideX = snapped
-                    }
-                    if let snapped = TimelineSnap.snapped(layer.y + dy, to: targetsY,
-                                                          threshold: 0.012) {
-                        dy = snapped - layer.y
-                        guideY = snapped
-                    }
-                }
-                dragDraft = (ids: selection, dx: dx, dy: dy)
+                let result = CanvasDrag.translation(
+                    layer: layer,
+                    translation: value.translation,
+                    canvas: CGSize(width: width, height: height),
+                    others: doc.layers.filter { $0.id != layer.id },
+                    selectionCount: selection.count)
+                guideX = result.guideX
+                guideY = result.guideY
+                dragDraft = (ids: selection, dx: result.dx, dy: result.dy)
             }
             .onEnded { _ in
                 defer { dragDraft = nil; guideX = nil; guideY = nil }

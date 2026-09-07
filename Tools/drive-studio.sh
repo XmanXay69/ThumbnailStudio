@@ -28,6 +28,7 @@ swiftc -O -o "$BIN" \
   ThumbKit/Models/NormalizedRect.swift \
   ThumbKit/Models/ThumbDocument.swift \
   ThumbKit/Models/ThumbEditing.swift \
+  ThumbKit/Models/CanvasGeometry.swift \
   ThumbKit/Services/ThumbAssets.swift \
   ThumbKit/Services/CutoutService.swift \
   ThumbKit/Services/CutoutRun.swift \
