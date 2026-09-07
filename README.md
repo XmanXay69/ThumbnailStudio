@@ -69,6 +69,19 @@ in both, and both read the same designs out of
 the front adopts what is on disk first, so having both open on one design can't
 silently clobber it.
 
+### Backing it up
+
+```bash
+Tools/backup.sh
+```
+
+Pushes to a bare repo in iCloud Drive, which is the whole trick: iCloud syncs
+a working copy badly because it races with git's own writes, but a bare repo
+is only touched during an explicit push. The script packs first as well —
+iCloud copes with a handful of large files far better than with tens of
+thousands of loose objects. Restore anywhere with
+`git clone "~/Library/Mobile Documents/com~apple~CloudDocs/Code Backups/VODEditor.git"`.
+
 ### Headless ingest
 
 The whole pipeline runs unattended, which is how it gets tested against a real
