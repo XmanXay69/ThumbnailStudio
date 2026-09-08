@@ -125,6 +125,9 @@ final class ThumbKeyRouter: ObservableObject {
     /// owns the rendered image, so the menu asks it rather than the reverse.
     var reviewHandler: (() -> Void)?
     var libraryHandler: (() -> Void)?
+    /// Opens the layouts sheet, which needs the document and the image cache
+    /// the pane already holds.
+    var layoutsHandler: (() -> Void)?
     /// The editor's own window. Every key is ignored unless this exact window
     /// is key, which is what makes sheets, panels, `NSOpenPanel` and a second
     /// design window safe for free.

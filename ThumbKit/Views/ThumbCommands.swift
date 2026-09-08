@@ -119,10 +119,14 @@ struct ThumbLayerCommands: Commands {
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(!router.selectionIsImage)
             Divider()
+            // ⇧⌘L, not ⌘L: the View menu's Library already claims ⌘L, and it
+            // is the one the tool rail advertises. Two items on one equivalent
+            // is not a tie — AppKit picks one and the other silently never
+            // fires, which is how this shipped.
             Button(router.selectionIsLocked ? "Unlock" : "Lock") {
                 actions?.toggleSelectionLock()
             }
-            .keyboardShortcut("l", modifiers: .command)
+            .keyboardShortcut("l", modifiers: [.command, .shift])
             .disabled(!router.hasSelection)
             Button(router.selectionIsHidden ? "Show" : "Hide") {
                 actions?.toggleSelectionHidden()
@@ -150,6 +154,13 @@ struct ThumbLayerCommands: Commands {
             Button("Send to Back") { actions?.arrangeSelection(.toBack) }
                 .keyboardShortcut("[", modifiers: [.command, .option])
                 .disabled(!router.hasSelection)
+            Divider()
+            // No key equivalent on purpose. Every mnemonic near this one is
+            // taken, and inventing a bad one to fill the column is how ⌘R and
+            // ⌘L came to be advertised in tooltips for verbs that were not
+            // bound to anything.
+            Button("Layouts…") { ThumbKeyRouter.shared.layoutsHandler?() }
+                .disabled(noEditor)
         }
 
         // MARK: View

@@ -50,7 +50,7 @@ enum ThumbShortcuts {
             ThumbShortcut("⌘ T", "Add a text layer"),
             ThumbShortcut("⇧ ⌘ I", "Add an image…"),
             ThumbShortcut("⇧ ⌘ K", "Remove background"),
-            ThumbShortcut("⌘ L", "Lock / unlock"),
+            ThumbShortcut("⇧ ⌘ L", "Lock / unlock"),
             ThumbShortcut("⇧ ⌘ H", "Hide / show"),
         ]),
         ThumbShortcutGroup(name: "Arrange", shortcuts: [
@@ -65,6 +65,9 @@ enum ThumbShortcuts {
             ThumbShortcut("⌘ 0", "Zoom to fit"),
             ThumbShortcut("⌘ 1", "Actual size"),
             ThumbShortcut("⌘ '", "Toggle the duration safe zone"),
+            ThumbShortcut("⌘ P", "Preview where it will be seen"),
+            ThumbShortcut("⌘ R", "Review this thumbnail"),
+            ThumbShortcut("⌘ L", "Library"),
             ThumbShortcut("⌘ N", "New design"),
             ThumbShortcut("⌘ S", "Save"),
             ThumbShortcut("⌘ E", "Export image…"),

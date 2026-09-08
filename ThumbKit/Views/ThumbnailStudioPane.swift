@@ -30,6 +30,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var showExport = false
     @State var showLibrary = false
     @State var showReview = false
+    @State var showLayouts = false
     @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
@@ -89,9 +90,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             ThumbKeyRouter.shared.previewHandler = { showPreview = true }
             ThumbKeyRouter.shared.reviewHandler = { showReview = true }
             ThumbKeyRouter.shared.libraryHandler = { showLibrary = true }
+            ThumbKeyRouter.shared.layoutsHandler = { showLayouts = true }
             ThumbKeyRouter.shared.canvasWidth = doc.width
             ThumbKeyRouter.shared.canvasHeight = doc.height
             rerender()
+            openLaunchSheet()
         }
         .onChange(of: undoManager) { _, manager in store.timelineUndoManager = manager }
         .onChange(of: editor.selection) { _, _ in ThumbKeyRouter.shared.refresh() }
@@ -144,6 +147,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         .sheet(isPresented: $showReview) {
             ReviewSheet(document: doc, image: canvasImage)
         }
+        .sheet(isPresented: $showLayouts) {
+            ComposeSheet(document: doc) { document, action in
+                apply(document, action)
+            }
+        }
         .sheet(isPresented: $showLibrary) {
             AssetLibrarySheet { path in
                 addLayer(.image(ImageSpec(path: path)), action: "Add Image")
@@ -173,6 +181,10 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             StudioIconButton("photo.stack", help: "Library  ⌘L") { showLibrary = true }
             StudioIconButton("checklist", help: "Review this thumbnail  ⌘R") {
                 showReview = true
+            }
+            StudioIconButton("rectangle.3.group",
+                             help: "Layouts — arrangements of your text") {
+                showLayouts = true
             }
             StudioIconButton("rectangle.on.rectangle.angled",
                              help: "Preview where it will be seen  ⌘P") {
@@ -221,6 +233,34 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                 editor.removeBackgroundOnSelection()
             }
             .disabled(!selectedIsImage)
+        }
+    }
+
+    /// `ThumbStudio --open "doomsday" --sheet layouts` opens that design with
+    /// that sheet already up.
+    ///
+    /// The companion to `--open`, and there for the same reason: this Mac
+    /// withholds accessibility permission, so nothing can click a button, and
+    /// a sheet nobody can open is a sheet nobody can check. Only ever reads
+    /// arguments the developer passed on the command line.
+    private func openLaunchSheet() {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--sheet"),
+              index + 1 < arguments.count else { return }
+        let wanted = arguments[index + 1].lowercased()
+        // One runloop turn later, not now. Presenting a sheet from inside
+        // `onAppear` mutates the state that drives this view while the view is
+        // still being installed, and the window comes up with no content at
+        // all — the same fault that writing `@FocusState` in `onAppear` caused
+        // in the gallery.
+        DispatchQueue.main.async {
+            switch wanted {
+            case "layouts": showLayouts = true
+            case "review": showReview = true
+            case "library": showLibrary = true
+            case "preview": showPreview = true
+            default: break
+            }
         }
     }
 

@@ -3574,6 +3574,268 @@ do {
     }
 }
 
+section("Auto-layout")
+do {
+    // A 16:9 plate for the backdrop, and a cutout whose top 40% is empty —
+    // the shape that made the rectangle-based version of this wrong by a third.
+    func plate(_ colour: NSColor, size: NSSize) -> NSImage {
+        NSImage(size: size, flipped: false) { rect in
+            colour.setFill(); rect.fill(); return true
+        }
+    }
+    let backdrop = plate(.darkGray, size: NSSize(width: 320, height: 180))
+    let cutout = NSImage(size: NSSize(width: 100, height: 100), flipped: false) { _ in
+        NSColor.white.setFill()
+        // flipped: false, so this fills the BOTTOM 60% — the top of the image
+        // is the transparent margin.
+        NSRect(x: 0, y: 0, width: 100, height: 60).fill()
+        return true
+    }
+    let provider: ThumbnailRenderer.ImageProvider = { spec in
+        spec.path == "/cutout" ? cutout : backdrop
+    }
+
+    var doc = ThumbDocument()
+    doc.width = 1280; doc.height = 720
+    let bg = ThumbLayer(kind: .image(ImageSpec(path: "/bg")), x: 0.5, y: 0.5, widthFraction: 1.0)
+    let subject = ThumbLayer(kind: .image(ImageSpec(path: "/cutout")),
+                             x: 0.78, y: 0.6, widthFraction: 0.4)
+    var headline = TextSpec(text: "BIG MONEY")
+    headline.sizeFraction = 0.16
+    headline.strokeWidth = 10
+    // Parked in the lower right, straddling the duration badge.
+    let text = ThumbLayer(kind: .text(headline), x: 0.62, y: 0.9, widthFraction: 0.7)
+    doc.layers = [bg, subject, text]
+
+    let roles = ThumbComposer.roles(for: doc, provider: provider)
+    check("a full-bleed plate is background, not something to dodge",
+          roles[bg.id] == .background)
+    check("a cutout standing in the frame is a subject",
+          roles[subject.id] == .subject, "coverage below the 0.62 backdrop line")
+
+    // Rotating that same cutout must not turn it into scenery. Classifying on
+    // the rotated bounding box does exactly that, because the box around a
+    // rotated rectangle is far bigger than the rectangle.
+    var spun = doc
+    spun.layers[1].rotationDegrees = 31.7
+    let spunRoles = ThumbComposer.roles(for: spun, provider: provider)
+    check("rotating a subject does not promote it to background",
+          spunRoles[spun.layers[1].id] == .subject)
+
+    let canvas = CGSize(width: 1280, height: 720)
+    let flat = ThumbnailRenderer.drawnBounds(spun.layers[1], in: canvas, provider: provider)
+    let turned = ThumbComposer.rotatedBounds(flat, degrees: 31.7,
+                                             about: CGPoint(x: spun.layers[1].x, y: spun.layers[1].y),
+                                             canvas: canvas)
+    check("rotated bounds actually grow, which drawnBounds never does",
+          turned.width > flat.width + 0.02 && turned.height > flat.height + 0.02,
+          String(format: "%.3fx%.3f -> %.3fx%.3f", flat.width, flat.height, turned.width, turned.height))
+    check("rotating by 180 degrees gets the box back",
+          {
+              let half = ThumbComposer.rotatedBounds(flat, degrees: 180,
+                                                     about: CGPoint(x: spun.layers[1].x, y: spun.layers[1].y),
+                                                     canvas: canvas)
+              return abs(half.width - flat.width) < 0.002 && abs(half.height - flat.height) < 0.002
+          }())
+
+    // The stroke is drawn outside the letters, so the painted box has to be
+    // wider than the glyph box or a headline whose stroke is under the badge
+    // reads as clear of it.
+    let glyphs = ThumbnailRenderer.drawnBounds(text, in: canvas, provider: provider)
+    let painted = ThumbComposer.paintedBounds(text, in: doc, provider: provider)
+    check("painted bounds include the stroke the glyph box leaves out",
+          painted.width > glyphs.width && painted.minY < glyphs.minY,
+          String(format: "glyphs %.4f wide, painted %.4f", glyphs.width, painted.width))
+
+    let reading = ThumbCanvasReader.read(doc, provider: provider)
+    check("the canvas reading fills its grid",
+          reading.luminance.count == reading.cols * reading.rows
+              && reading.subjectCoverage.count == reading.cols * reading.rows,
+          "\(reading.cols)x\(reading.rows)")
+    check("subject coverage ignores a cutout's transparent margin",
+          {
+              // Top of the subject's layer box, which is empty in the PNG.
+              let box = ThumbnailRenderer.drawnBounds(subject, in: canvas, provider: provider)
+              let phantom = CGRect(x: box.minX, y: box.minY, width: box.width, height: box.height * 0.3)
+              let solid = CGRect(x: box.minX, y: box.midY, width: box.width, height: box.height * 0.3)
+              return reading.subjectOverlap(in: phantom) < 0.1
+                  && reading.subjectOverlap(in: solid) > 0.5
+          }(), "the layer rect claims ground the image does not paint")
+    check("text is excluded from the backdrop it is measured against",
+          {
+              // Painting the headline white would lift the luminance where it
+              // sits if the reading had included it.
+              var lit = doc
+              if case .text(var spec) = lit.layers[2].kind {
+                  spec.fillHex = "FFFFFF"
+                  lit.layers[2].kind = .text(spec)
+              }
+              let a = ThumbCanvasReader.read(doc, provider: provider)
+              let b = ThumbCanvasReader.read(lit, provider: provider)
+              return a.luminance == b.luminance
+          }())
+
+    let layouts = ThumbComposer.layouts(for: doc, reading: reading, provider: provider)
+    check("layouts are offered", layouts.count >= 3, "\(layouts.count)")
+    check("the design you already have is always one of them",
+          layouts.contains { $0.isCurrent })
+    check("layouts come back best first",
+          zip(layouts, layouts.dropFirst()).allSatisfy { $0.score.overall >= $1.score.overall })
+
+    let generated = layouts.filter { !$0.isCurrent }
+    check("every arrangement keeps the text off the duration badge",
+          generated.allSatisfy { layout in
+              layout.document.layers.allSatisfy { layer in
+                  guard case .text = layer.kind else { return true }
+                  return !ThumbComposer.paintedBounds(layer, in: layout.document, provider: provider)
+                      .intersects(ThumbComposer.badgeRect)
+              }
+          }, "the one thing this feature exists to do")
+    check("every arrangement keeps the text inside the frame",
+          generated.allSatisfy { layout in
+              layout.document.layers.allSatisfy { layer in
+                  guard case .text = layer.kind else { return true }
+                  let ink = ThumbComposer.paintedBounds(layer, in: layout.document, provider: provider)
+                  let m = ThumbComposer.edgeMargin - 0.001
+                  return ink.minX >= m && ink.minY >= m && ink.maxX <= 1 - m && ink.maxY <= 1 - m
+              }
+          })
+    check("no arrangement shrinks your type past the stated floor",
+          generated.allSatisfy { layout in
+              guard case .text(let after) = layout.document.layers[2].kind,
+                    case .text(let before) = doc.layers[2].kind else { return false }
+              return after.sizeFraction / before.sizeFraction >= ThumbComposer.minimumSizeRatio - 0.001
+          })
+    check("no arrangement enlarges your type either",
+          generated.allSatisfy { layout in
+              guard case .text(let after) = layout.document.layers[2].kind,
+                    case .text(let before) = doc.layers[2].kind else { return false }
+              return after.sizeFraction <= before.sizeFraction + 0.001
+          }, "auto-layout that doubles your headline is not arranging your design")
+    check("nothing but text ever moves",
+          generated.allSatisfy { layout in
+              layout.document.layers.indices.allSatisfy { index in
+                  let after = layout.document.layers[index], before = doc.layers[index]
+                  if case .text = before.kind { return true }
+                  return after.x == before.x && after.y == before.y
+                      && after.widthFraction == before.widthFraction
+                      && after.rotationDegrees == before.rotationDegrees
+              }
+          }, "the background and the cutout are decisions, not suggestions")
+    check("layer order and identity survive an arrangement",
+          generated.allSatisfy { $0.document.layers.map(\.id) == doc.layers.map(\.id) })
+
+    // Running it twice must not walk the design across the canvas.
+    if let best = generated.first {
+        let second = ThumbComposer.layouts(
+            for: best.document,
+            reading: ThumbCanvasReader.read(best.document, provider: provider),
+            provider: provider)
+        let again = second.first { $0.name == best.name }
+        check("applying the same layout twice does not move it again",
+              {
+                  guard let again else { return true }
+                  return zip(again.document.layers, best.document.layers).allSatisfy {
+                      abs($0.x - $1.x) < 0.005 && abs($0.y - $1.y) < 0.005
+                  }
+              }(), best.name)
+    }
+
+    // Locked and hidden text is not yours to move.
+    var guarded = doc
+    guarded.layers[2].isLocked = true
+    check("a locked text layer is left alone",
+          ThumbComposer.layouts(for: guarded,
+                                reading: ThumbCanvasReader.read(guarded, provider: provider),
+                                provider: provider).isEmpty)
+    var blank = ThumbDocument()
+    blank.layers = [bg]
+    check("a design with no text has nothing to arrange",
+          ThumbComposer.layouts(for: blank,
+                                reading: ThumbCanvasReader.read(blank, provider: provider),
+                                provider: provider).isEmpty)
+
+    // The floor this feature promises has to be the floor the review measures,
+    // not a second number that drifts away from it.
+    var atFloor = ThumbDocument()
+    var floorSpec = TextSpec(text: "X")
+    floorSpec.sizeFraction = ThumbComposer.minimumSizeFraction(for: atFloor)
+    atFloor.layers = [ThumbLayer(kind: .text(floorSpec))]
+    check("the composer's readable floor is the review's readable floor",
+          {
+              let pixels = ThumbLegibility.report(for: atFloor).smallestTextPixels ?? 0
+              return abs(pixels - ThumbLegibility.readablePixels) < 0.01
+          }(), String(format: "sizeFraction %.4f", floorSpec.sizeFraction))
+
+    // A badge collision has to cost something, or the ranking quietly ignores
+    // the fault the feature was opened to find.
+    var onBadge = doc
+    onBadge.layers[2].x = 0.62; onBadge.layers[2].y = 0.9
+    var offBadge = doc
+    offBadge.layers[2].x = 0.35; offBadge.layers[2].y = 0.9
+    let onScore = ThumbComposer.score(onBadge, original: doc, reading: reading, provider: provider)
+    let offScore = ThumbComposer.score(offBadge, original: doc, reading: reading, provider: provider)
+    check("text under the duration badge scores worse than text beside it",
+          onScore.badge < offScore.badge - 0.05,
+          String(format: "%.2f vs %.2f", onScore.badge, offScore.badge))
+
+    // Busyness has to discriminate on real material. Every candidate scoring
+    // zero is what happened when the ceiling was set too low.
+    check("a flat panel reads calmer than a noisy one",
+          {
+              var flatDoc = ThumbDocument()
+              flatDoc.backgroundHex = "808080"
+              flatDoc.layers = [ThumbLayer(kind: .text(TextSpec(text: "HI")))]
+              let calm = ThumbCanvasReader.read(flatDoc, provider: { _ in nil })
+              let full = CGRect(x: 0, y: 0, width: 1, height: 1)
+              return calm.busynessUnder(full) < 0.02 && reading.busynessUnder(full) >= calm.busynessUnder(full)
+          }())
+
+    check("fitting never returns more than it was asked for",
+          {
+              let fitted = ThumbComposer.fittedSize(for: text, wrapWidth: 0.4, maxHeight: 0.9,
+                                                    in: doc, ceiling: 0.12)
+              return fitted <= 0.12 + 0.0001
+          }())
+    check("left-aligned text's ink sits at the left of its wrap box",
+          {
+              var spec = TextSpec(text: "HI")
+              spec.alignment = "left"
+              spec.sizeFraction = 0.1
+              let layer = ThumbLayer(kind: .text(spec), x: 0.5, y: 0.5, widthFraction: 0.8)
+              let box = ThumbnailRenderer.drawnBounds(layer, in: canvas, provider: provider)
+              let ink = ThumbComposer.inkBounds(layer, in: doc, provider: provider)
+              // drawnBounds hands back the whole wrap box for non-centred text.
+              // The glyphs are flush to one edge of it, not centred in it.
+              return ink.width < box.width * 0.6 && abs(ink.minX - box.minX) < 0.001
+          }(), "drawnBounds returns the full wrap box for anything but centred text")
+    check("right-aligned text's ink sits at the right of its wrap box",
+          {
+              var spec = TextSpec(text: "HI")
+              spec.alignment = "right"
+              spec.sizeFraction = 0.1
+              let layer = ThumbLayer(kind: .text(spec), x: 0.5, y: 0.5, widthFraction: 0.8)
+              let box = ThumbnailRenderer.drawnBounds(layer, in: canvas, provider: provider)
+              let ink = ThumbComposer.inkBounds(layer, in: doc, provider: provider)
+              return abs(ink.maxX - box.maxX) < 0.001 && ink.minX > box.minX + 0.1
+          }())
+    check("the canvas reading does not depend on the export size",
+          {
+              var big = doc
+              big.width = 3840; big.height = 2160
+              let small = ThumbCanvasReader.read(doc, provider: provider)
+              let large = ThumbCanvasReader.read(big, provider: provider)
+              guard small.luminance.count == large.luminance.count else { return false }
+              // Same composition, same grid — a probe that scaled with the
+              // document would also be reading a 33-megapixel bitmap to fill it.
+              return zip(small.luminance, large.luminance).allSatisfy { abs($0 - $1) < 0.03 }
+                  && zip(small.subjectCoverage, large.subjectCoverage).allSatisfy { abs($0 - $1) < 0.05 }
+          }())
+    check("a short box forces smaller type than a tall one",
+          ThumbComposer.fittedSize(for: text, wrapWidth: 0.4, maxHeight: 0.10, in: doc, ceiling: 0.16)
+              < ThumbComposer.fittedSize(for: text, wrapWidth: 0.4, maxHeight: 0.40, in: doc, ceiling: 0.16))
+}
+
 // The banger pass: laughter in the envelope, then the blend.
 section("Banger pass")
 do {

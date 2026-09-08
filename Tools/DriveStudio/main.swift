@@ -227,7 +227,16 @@ func run() async {
     store.applyThumbDoc(pinning, action: nil)
 
     section("Resizing a layer")
-    var target = store.thumbDoc.layers[0]
+    // Deliberately not layers[0]. Whether the selection box grows with the
+    // handle depends on what the layer IS: an image keeps its aspect, so it
+    // does; a text layer reflows onto fewer lines as its wrap box widens, so it
+    // gets SHORTER. This test asserted the image behaviour while picking
+    // whatever sat at the bottom of the stack, and the design it happens to
+    // open has text down there.
+    var target = store.thumbDoc.layers.first(where: {
+        if case .text = $0.kind { return false }
+        return true
+    }) ?? store.thumbDoc.layers[0]
     target.widthFraction = 0.40
     target.heightFraction = 0.20
     let grown = CanvasResize.proposedWidth(from: target, translationX: 128,
@@ -273,6 +282,23 @@ func run() async {
     check("the selection box grows with the layer",
           heightAfter > heightBefore,
           String(format: "%.3f -> %.3f", heightBefore, heightAfter))
+    // The other half of the same rule, which is not a bug: a text layer's
+    // widthFraction is a WRAP width, so widening it rewraps the words onto
+    // fewer lines and the drawn box gets shorter.
+    if let textLayer = store.thumbDoc.layers.first(where: {
+        if case .text(let spec) = $0.kind { return spec.renderedText.contains(" ") }
+        return false
+    }) {
+        var narrow = textLayer, wide = textLayer
+        narrow.widthFraction = 0.30
+        wide.widthFraction = 0.95
+        let tall = ThumbnailRenderer.drawnHeightFraction(narrow, in: canvas,
+                                                         provider: ThumbnailRenderer.fileProvider)
+        let flat = ThumbnailRenderer.drawnHeightFraction(wide, in: canvas,
+                                                         provider: ThumbnailRenderer.fileProvider)
+        check("widening a text layer reflows it shorter, not taller",
+              flat < tall, String(format: "%.3f wide vs %.3f narrow", flat, tall))
+    }
     check("a resize is one undo step", undo.canUndo)
     undo.undo()
     check("undo restores the old size",

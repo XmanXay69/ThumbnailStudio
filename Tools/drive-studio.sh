@@ -26,6 +26,8 @@ swiftc -O -o "$BIN" \
   ThumbKit/Core/HexColor.swift \
   ThumbKit/Core/EditingPrimitives.swift \
   ThumbKit/Models/NormalizedRect.swift \
+  ThumbKit/Models/ThumbFonts.swift \
+  ThumbKit/Models/ThumbLegibility.swift \
   ThumbKit/Models/ThumbDocument.swift \
   ThumbKit/Models/ThumbEditing.swift \
   ThumbKit/Models/CanvasGeometry.swift \
@@ -33,6 +35,8 @@ swiftc -O -o "$BIN" \
   ThumbKit/Services/CutoutService.swift \
   ThumbKit/Services/CutoutRun.swift \
   ThumbKit/Services/ThumbnailRenderer.swift \
+  ThumbKit/Models/ThumbComposition.swift \
+  ThumbKit/Services/ThumbCanvasReader.swift \
   ThumbKit/Services/ThumbFrameSource.swift \
   ThumbKit/Services/ThumbStore.swift \
   ThumbKit/Services/ThumbLayerClipboard.swift \
