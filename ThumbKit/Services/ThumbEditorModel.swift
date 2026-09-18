@@ -133,7 +133,7 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
     func cycleSelection(forward: Bool) {
         let current = selection.count == 1 ? selection.first : nil
         guard let next = doc.neighbourLayerID(after: current, forward: forward) else { return }
-        selection = [next]
+        selection = doc.expandedSelection([next])
         ThumbKeyRouter.shared.refresh()
     }
 
@@ -154,6 +154,30 @@ final class ThumbEditorModel<Store: ThumbStore>: ObservableObject, ThumbEditorAc
         case .toBack: name = "Send to Back"
         }
         apply(document, name)
+    }
+
+    /// Bundles the selection. Named for what you grouped where that is
+    /// obvious — three layers called "Character" is more use in the panel than
+    /// "Group 3".
+    func groupSelection() {
+        var document = doc
+        guard let id = document.group(selection) else { return }
+        apply(document, "Group Layers")
+        selection = Set(document.members(of: id))
+        ThumbKeyRouter.shared.refresh()
+    }
+
+    func ungroupSelection() {
+        var document = doc
+        guard document.ungroup(selection) else { return }
+        apply(document, "Ungroup Layers")
+        ThumbKeyRouter.shared.refresh()
+    }
+
+    /// Whether the selection is worth offering Group / Ungroup for.
+    var canGroup: Bool { selection.count >= 2 }
+    var canUngroup: Bool {
+        doc.layers.contains { selection.contains($0.id) && $0.groupID != nil }
     }
 
     func toggleSelectionLock() {

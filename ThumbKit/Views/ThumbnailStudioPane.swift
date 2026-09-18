@@ -47,6 +47,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     /// request takes the next token and throws its result away if it is no
     /// longer the newest.
     @State var renderToken = 0
+    /// The group whose name is being edited, if any.
+    @State var renamingGroup: UUID?
     @State var guideX: Double?
     @State var guideY: Double?
 
@@ -164,6 +166,16 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         }
         .sheet(isPresented: $showReview) {
             ReviewSheet(document: doc, image: canvasImage)
+        }
+        .sheet(isPresented: Binding(get: { renamingGroup != nil },
+                                    set: { if !$0 { renamingGroup = nil } })) {
+            if let id = renamingGroup {
+                GroupRenameSheet(name: doc.groupName(id) ?? "Group") { newName in
+                    var document = doc
+                    document.renameGroup(id, to: newName)
+                    apply(document, "Rename Group")
+                }
+            }
         }
         .sheet(isPresented: $showLayouts) {
             ComposeSheet(document: doc) { document, action in
@@ -343,12 +355,19 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         apply(document, action)
     }
 
-    func select(_ id: UUID, extending: Bool = false) {
+    /// Picking a layer picks its group, unless you deliberately reached past
+    /// the group to get at the member — which is what `withinGroup` means, and
+    /// what clicking a row inside an expanded group in the layers panel does.
+    func select(_ id: UUID, extending: Bool = false, withinGroup: Bool = false) {
+        let wanted = withinGroup ? [id] : doc.expandedSelection([id])
         if extending {
-            if editor.selection.contains(id) { editor.selection.remove(id) }
-            else { editor.selection.insert(id) }
+            if editor.selection.isSuperset(of: wanted) {
+                editor.selection.subtract(wanted)
+            } else {
+                editor.selection.formUnion(wanted)
+            }
         } else {
-            editor.selection = [id]
+            editor.selection = wanted
         }
     }
 

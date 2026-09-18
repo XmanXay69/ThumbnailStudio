@@ -58,6 +58,8 @@ enum ThumbShortcuts {
             ThumbShortcut("⌘ [", "Send backward"),
             ThumbShortcut("⌥ ⌘ ]", "Bring to front"),
             ThumbShortcut("⌥ ⌘ [", "Send to back"),
+            ThumbShortcut("⌘ G", "Group"),
+            ThumbShortcut("⇧ ⌘ G", "Ungroup"),
         ]),
         ThumbShortcutGroup(name: "View & file", shortcuts: [
             ThumbShortcut("⌘ =", "Zoom in"),

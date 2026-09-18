@@ -15,6 +15,8 @@ protocol ThumbEditorActions: AnyObject {
     /// False when there is nothing to cycle, so Tab can fall through to
     /// AppKit's own focus navigation instead of vanishing.
     var canCycleSelection: Bool { get }
+    var canGroup: Bool { get }
+    var canUngroup: Bool { get }
 
     func deleteSelection()
     func nudgeSelection(dx: Double, dy: Double)
@@ -28,6 +30,8 @@ protocol ThumbEditorActions: AnyObject {
     func cycleSelection(forward: Bool)
     func beginEditingSelectedText()
     func arrangeSelection(_ move: ThumbDocument.LayerMove)
+    func groupSelection()
+    func ungroupSelection()
     func toggleSelectionLock()
     func toggleSelectionHidden()
     func removeBackgroundOnSelection()
@@ -108,6 +112,8 @@ final class ThumbKeyRouter: ObservableObject {
     @Published private(set) var selectionIsText = false
     @Published private(set) var selectionIsImage = false
     @Published private(set) var selectionIsLocked = false
+    @Published private(set) var canGroup = false
+    @Published private(set) var canUngroup = false
     @Published private(set) var selectionIsHidden = false
     @Published private(set) var canPaste = false
     @Published private(set) var isEditorActive = false
@@ -191,12 +197,15 @@ final class ThumbKeyRouter: ObservableObject {
         guard let actions else {
             hasSelection = false; selectionIsText = false; selectionIsImage = false
             selectionIsLocked = false; selectionIsHidden = false; canPaste = false
+            canGroup = false; canUngroup = false
             return
         }
         hasSelection = actions.hasSelection
         selectionIsText = actions.selectionIsText
         selectionIsImage = actions.selectionIsImage
         selectionIsLocked = actions.selectionIsLocked
+        canGroup = actions.canGroup
+        canUngroup = actions.canUngroup
         selectionIsHidden = actions.selectionIsHidden
         canPaste = actions.canPasteNow
     }

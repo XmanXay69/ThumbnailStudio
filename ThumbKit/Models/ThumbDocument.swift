@@ -18,6 +18,7 @@ struct ThumbDocument: Codable, Equatable {
     /// unstyled document are not the same thing.
     var transparentBackground: Bool = false
     var layers: [ThumbLayer] = []
+    var groups: [ThumbGroup] = []
 
     init() {}
 
@@ -31,6 +32,7 @@ struct ThumbDocument: Codable, Equatable {
         backgroundHex = try? container.decodeIfPresent(String.self, forKey: .backgroundHex)
         transparentBackground = value(.transparentBackground, false)
         layers = value(.layers, [])
+        groups = value(.groups, [])
     }
 
     /// Canvas presets — YouTube first, since that's the point.
@@ -110,6 +112,42 @@ struct ThumbDocument: Codable, Equatable {
             layers.insert(layer, at: 0)
         }
         return true
+    }
+}
+
+/// A named set of layers that behave as one.
+///
+/// Membership lives on the LAYERS, as a `groupID`, rather than here as a list
+/// of children — and the document stays one flat array rather than becoming a
+/// tree. That is the whole reason this was affordable: every verb in the app
+/// already takes a `Set<UUID>`, so expanding a selection to a group's members
+/// makes move, delete, duplicate, lock, hide, align and arrange work on groups
+/// without any of them being touched. A tree would have meant rewriting the
+/// renderer, hit testing, z-order and the layers panel at once.
+///
+/// The price is that groups do not nest. That is a real limit and it is the
+/// right trade: the problem being solved is "I reselect the same three layers
+/// every time", not "I need a hierarchy".
+struct ThumbGroup: Codable, Equatable, Identifiable {
+    var id: UUID = UUID()
+    var name: String = "Group"
+    /// Collapsed groups show one row in the layers panel instead of N.
+    var isCollapsed: Bool = false
+
+    init(id: UUID = UUID(), name: String = "Group", isCollapsed: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isCollapsed = isCollapsed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id = value(.id, UUID())
+        name = value(.name, "Group")
+        isCollapsed = value(.isCollapsed, false)
     }
 }
 
@@ -237,13 +275,15 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
     var isVisible: Bool = true
     var isLocked: Bool = false
     var effects = LayerEffects()
+    /// Which group this belongs to, if any.
+    var groupID: UUID?
 
     init(id: UUID = UUID(), name: String = "", kind: Kind,
          x: Double = 0.5, y: Double = 0.5,
          widthFraction: Double = 0.5, heightFraction: Double = 0.3,
          rotationDegrees: Double = 0, opacity: Double = 1,
          blendMode: String = "normal", isVisible: Bool = true, isLocked: Bool = false,
-         effects: LayerEffects = LayerEffects()) {
+         effects: LayerEffects = LayerEffects(), groupID: UUID? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -257,6 +297,7 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
         self.isVisible = isVisible
         self.isLocked = isLocked
         self.effects = effects
+        self.groupID = groupID
     }
 
     init(from decoder: Decoder) throws {
@@ -277,6 +318,7 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
         isVisible = value(.isVisible, true)
         isLocked = value(.isLocked, false)
         effects = value(.effects, LayerEffects())
+        groupID = try? container.decodeIfPresent(UUID.self, forKey: .groupID)
     }
 
     var displayName: String {

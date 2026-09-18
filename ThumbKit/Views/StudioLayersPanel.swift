@@ -26,18 +26,44 @@ extension ThumbnailStudioPane {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(doc.layers.reversed()) { layer in
-                        layerRow(layer)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 1, leading: Studio.Space.xs,
-                                                      bottom: 1, trailing: Studio.Space.xs))
-                            .listRowBackground(Color.clear)
+                    // The outer ForEach is over UNITS, not layers, so a drag
+                    // gives unit indices and a group travels as one block. Its
+                    // members are rows nested inside it.
+                    ForEach(doc.stackUnits()) { unit in
+                        switch unit {
+                        case .layer(let id):
+                            if let layer = doc.layers.first(where: { $0.id == id }) {
+                                layerRow(layer)
+                                    .listRowSeparator(.hidden)
+                                    .listRowInsets(EdgeInsets(top: 1, leading: Studio.Space.xs,
+                                                              bottom: 1, trailing: Studio.Space.xs))
+                                    .listRowBackground(Color.clear)
+                            }
+                        case .group(let id):
+                            if let group = doc.groups.first(where: { $0.id == id }) {
+                                groupHeaderRow(group)
+                                    .listRowSeparator(.hidden)
+                                    .listRowInsets(EdgeInsets(top: 1, leading: Studio.Space.xs,
+                                                              bottom: 1, trailing: Studio.Space.xs))
+                                    .listRowBackground(Color.clear)
+                                if !group.isCollapsed {
+                                    ForEach(doc.members(of: id).reversed(), id: \.self) { member in
+                                        if let layer = doc.layers.first(where: { $0.id == member }) {
+                                            layerRow(layer, inGroup: true)
+                                                .listRowSeparator(.hidden)
+                                                .listRowInsets(EdgeInsets(
+                                                    top: 1, leading: Studio.Space.l,
+                                                    bottom: 1, trailing: Studio.Space.xs))
+                                                .listRowBackground(Color.clear)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     .onMove { from, to in
-                        var reversed = Array(doc.layers.reversed())
-                        reversed.move(fromOffsets: from, toOffset: to)
                         var document = doc
-                        document.layers = reversed.reversed()
+                        guard document.moveUnits(fromOffsets: from, toOffset: to) else { return }
                         apply(document, "Reorder Layers")
                     }
                 }
@@ -108,11 +134,16 @@ extension ThumbnailStudioPane {
         .help("Templates")
     }
 
-    private func layerRow(_ layer: ThumbLayer) -> some View {
+    /// `inGroup` rows sit under an expanded group header. Clicking one selects
+    /// that layer ALONE — you opened the group and reached past it, which is
+    /// the escape hatch from "click a member, get the group".
+    private func layerRow(_ layer: ThumbLayer, inGroup: Bool = false) -> some View {
         LayerRow(layer: layer,
                  document: doc,
                  isSelected: selection.contains(layer.id),
-                 onSelect: { extending in select(layer.id, extending: extending) },
+                 onSelect: { extending in
+                     select(layer.id, extending: extending, withinGroup: inGroup)
+                 },
                  onToggleVisible: {
                      mutateLayer(layer.id, "Layer Visibility") { $0.isVisible.toggle() }
                  },
@@ -133,7 +164,77 @@ extension ThumbnailStudioPane {
                     select(layer.id)
                     editor.deleteSelection()
                 }
+                if layer.groupID != nil {
+                    Divider()
+                    Button("Ungroup  ⇧⌘G") {
+                        select(layer.id)
+                        editor.ungroupSelection()
+                    }
+                }
             }
+    }
+
+    /// The row that stands for a whole group: a disclosure arrow, its name,
+    /// and how many layers are inside. Clicking it selects all of them.
+    private func groupHeaderRow(_ group: ThumbGroup) -> some View {
+        let members = doc.members(of: group.id)
+        let isSelected = !members.isEmpty && members.allSatisfy { selection.contains($0) }
+        return HStack(spacing: Studio.Space.xs) {
+            Button {
+                var document = doc
+                document.setGroupCollapsed(group.id, !group.isCollapsed)
+                // Saved, but not an undo step: a disclosure arrow is a view
+                // preference that happens to live in the file, and ⌘Z should
+                // take back your last EDIT, not re-open a folder.
+                store.applyThumbDoc(document, action: nil)
+            } label: {
+                Image(systemName: group.isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(Studio.Typo.iconSmall)
+                    .foregroundStyle(Studio.Palette.textTertiary)
+                    .frame(width: 12)
+            }
+            .buttonStyle(.plain)
+            Image(systemName: "folder")
+                .font(Studio.Typo.iconSmall)
+                .foregroundStyle(Studio.Palette.accent)
+            Text(group.name)
+                .font(Studio.Typo.bodyStrong)
+                .foregroundStyle(Studio.Palette.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Text("\(members.count)")
+                .font(Studio.Typo.caption)
+                .foregroundStyle(Studio.Palette.textTertiary)
+        }
+        .padding(.horizontal, Studio.Space.xs)
+        .frame(height: Studio.Metric.layerRowHeight)
+        .studioSelectable(isSelected: isSelected)
+        .contentShape(Rectangle())
+        .onTapGesture { editor.selection = Set(members) }
+        .contextMenu {
+            Button("Rename…") { renamingGroup = group.id }
+            Button(group.isCollapsed ? "Expand" : "Collapse") {
+                var document = doc
+                document.setGroupCollapsed(group.id, !group.isCollapsed)
+                // Saved, but not an undo step: a disclosure arrow is a view
+                // preference that happens to live in the file, and ⌘Z should
+                // take back your last EDIT, not re-open a folder.
+                store.applyThumbDoc(document, action: nil)
+            }
+            Divider()
+            Button("Ungroup  ⇧⌘G") {
+                editor.selection = Set(members)
+                editor.ungroupSelection()
+            }
+            Button("Duplicate  ⌘D") {
+                editor.selection = Set(members)
+                editor.duplicateSelection()
+            }
+            Button("Delete  ⌫", role: .destructive) {
+                editor.selection = Set(members)
+                editor.deleteSelection()
+            }
+        }
     }
 }
 
@@ -278,5 +379,47 @@ final class LayerThumbnailCache {
         let output = NSImage(size: size)
         output.addRepresentation(rep)
         return output
+    }
+}
+
+/// Renaming a group. A sheet rather than an inline field: the row is 32pt tall
+/// and already carries a disclosure arrow, a folder, a count and a selection
+/// state, and an editable field in there fights all four for the click.
+struct GroupRenameSheet: View {
+    @State var name: String
+    let onCommit: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Studio.Space.m) {
+            Text("Group name")
+                .font(Studio.Typo.bodyStrong)
+                .foregroundStyle(Studio.Palette.textPrimary)
+            TextField("Group", text: $name)
+                .textFieldStyle(.plain)
+                .font(Studio.Typo.body)
+                .padding(.horizontal, Studio.Space.s)
+                .frame(height: Studio.Metric.controlM)
+                .background(RoundedRectangle(cornerRadius: Studio.Radius.field, style: .continuous)
+                    .fill(Studio.Palette.control))
+                .onSubmit { commit() }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.studio(.secondary, .medium))
+                Button("Rename") { commit() }
+                    .buttonStyle(.studio(.primary, .medium))
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Studio.Space.l)
+        .frame(width: 320)
+        .studioWindowBackground()
+    }
+
+    private func commit() {
+        onCommit(name.trimmingCharacters(in: .whitespacesAndNewlines))
+        dismiss()
     }
 }

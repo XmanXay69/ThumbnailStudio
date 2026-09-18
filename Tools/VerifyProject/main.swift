@@ -3384,6 +3384,199 @@ do {
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
+section("Groups")
+do {
+    func doc(_ n: Int) -> ThumbDocument {
+        var d = ThumbDocument()
+        d.layers = (0..<n).map { i in
+            ThumbLayer(name: "L\(i)", kind: .text(TextSpec(text: "L\(i)")),
+                       x: 0.1 * Double(i + 1), y: 0.5)
+        }
+        return d
+    }
+    func names(_ d: ThumbDocument) -> [String] { d.layers.map(\.name) }
+
+    var d = doc(5)
+    let ids = Set([d.layers[1].id, d.layers[3].id])
+    let gid = d.group(ids)
+    check("grouping two layers makes a group", gid != nil && d.groups.count == 1)
+    check("both layers know they are in it",
+          d.layers.filter { $0.groupID == gid }.count == 2)
+
+    // Contiguity: "bring forward" moves a block by one, and a group with other
+    // layers interleaved would shuffle through them and tear itself apart.
+    check("members are gathered into one contiguous block",
+          {
+              let positions = d.layers.enumerated()
+                  .filter { $0.element.groupID == gid }.map(\.offset).sorted()
+              return positions.count == 2 && positions[1] == positions[0] + 1
+          }(), names(d).joined(separator: ","))
+    check("the block lands at the topmost member's position, not the bottom",
+          names(d) == ["L0", "L2", "L1", "L3", "L4"],
+          names(d).joined(separator: ","))
+    check("no layer is lost or duplicated by gathering",
+          Set(names(d)) == Set(["L0", "L1", "L2", "L3", "L4"]) && d.layers.count == 5)
+
+    // The mechanism the rest of the app rides on.
+    check("selecting one member expands to the whole group",
+          d.expandedSelection([d.layers[2].id]).count == 2)
+    check("selecting an ungrouped layer expands to nothing extra",
+          d.expandedSelection([d.layers[0].id]) == [d.layers[0].id])
+    check("an empty selection stays empty", d.expandedSelection([]).isEmpty)
+
+    check("grouping fewer than two layers is not a group",
+          {
+              var one = doc(3)
+              return one.group([one.layers[0].id]) == nil && one.groups.isEmpty
+          }())
+    check("regrouping exactly the same layers changes nothing",
+          {
+              var same = d
+              let before = same.groups.count
+              return same.group(Set(same.members(of: gid!))) == nil
+                  && same.groups.count == before
+          }(), "otherwise every stray Cmd-G stacks another dead group")
+
+    // Growing a group must not leave the old one behind.
+    check("adding a layer to a group leaves exactly one group",
+          {
+              var grown = d
+              let wanted = Set(grown.members(of: gid!) + [grown.layers[0].id])
+              let fresh = grown.group(wanted)
+              return fresh != nil && grown.groups.count == 1
+                  && grown.members(of: fresh!).count == 3
+          }())
+
+    check("ungrouping releases every member",
+          {
+              var loose = d
+              return loose.ungroup([loose.layers[2].id])
+                  && loose.groups.isEmpty
+                  && loose.layers.allSatisfy { $0.groupID == nil }
+          }())
+    check("ungrouping does not move anything",
+          {
+              var loose = d
+              _ = loose.ungroup([loose.layers[2].id])
+              return names(loose) == names(d)
+          }())
+    check("ungrouping something that is not grouped is a no-op",
+          {
+              var plain = doc(3)
+              return !plain.ungroup([plain.layers[0].id])
+          }())
+
+    // A group of one is not a group.
+    check("deleting down to one member dissolves the group",
+          {
+              var thinned = d
+              let members = thinned.members(of: gid!)
+              _ = thinned.removeLayers(ids: [members[0]])
+              return thinned.groups.isEmpty
+                  && thinned.layers.allSatisfy { $0.groupID == nil }
+          }(), "a disclosure arrow over a single row is not a group")
+    check("deleting a whole group removes it",
+          {
+              var gone = d
+              _ = gone.removeLayers(ids: Set(gone.members(of: gid!)))
+              return gone.groups.isEmpty && gone.layers.count == 3
+          }())
+
+    // Duplicating a group must produce a SECOND group, or selecting either
+    // copy would drag both.
+    check("duplicating a group makes a separate group",
+          {
+              var copied = d
+              let made = copied.duplicateLayers(ids: Set(copied.members(of: gid!)))
+              guard made.count == 2, copied.groups.count == 2 else { return false }
+              let newGroup = copied.layers.first { $0.id == made[0] }?.groupID
+              return newGroup != nil && newGroup != gid
+                  && copied.members(of: newGroup!).count == 2
+                  && copied.members(of: gid!).count == 2
+          }(), "otherwise the copy joins the original and both move together")
+
+    // A layer pasted from elsewhere must not claim membership here.
+    check("pasted layers arrive ungrouped",
+          {
+              var target = doc(2)
+              var stowaway = ThumbLayer(kind: .text(TextSpec(text: "X")))
+              stowaway.groupID = gid
+              _ = target.appendLayers([stowaway])
+              return target.layers.last?.groupID == nil
+          }(), "a group id from another design is an invisible passenger")
+
+    // Dragging in the panel moves UNITS. Reordering raw layers would walk a
+    // group through its neighbours one member at a time and interleave it.
+    check("the panel sees a group as one draggable thing",
+          d.stackUnits().count == 4 && d.layers.count == 5,
+          "5 layers, 4 rows to drag")
+    check("dragging a group moves every member together",
+          {
+              var dragged = d
+              // Units top-first: L4, [L3,L1], L2, L0 — move the group to the top.
+              let units = dragged.stackUnits()
+              guard let at = units.firstIndex(where: {
+                  if case .group = $0 { return true }; return false
+              }) else { return false }
+              guard dragged.moveUnits(fromOffsets: IndexSet(integer: at), toOffset: 0)
+              else { return false }
+              let positions = dragged.layers.enumerated()
+                  .filter { $0.element.groupID != nil }.map(\.offset).sorted()
+              return positions == [3, 4]
+          }(), "the block ends up on top, still contiguous")
+    check("a drag never loses or duplicates a layer",
+          {
+              var dragged = d
+              _ = dragged.moveUnits(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+              return dragged.layers.count == 5
+                  && Set(dragged.layers.map(\.id)).count == 5
+          }())
+    check("dragging an ungrouped layer still works",
+          {
+              var plain = doc(3)
+              let first = plain.layers[0].id
+              _ = plain.moveUnits(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+              return plain.layers.count == 3 && plain.layers.last?.id != first
+          }())
+
+    check("groups survive a save",
+          {
+              guard let data = try? JSONEncoder().encode(d),
+                    let back = try? JSONDecoder().decode(ThumbDocument.self, from: data)
+              else { return false }
+              return back.groups == d.groups
+                  && back.layers.map(\.groupID) == d.layers.map(\.groupID)
+          }())
+    check("a design saved before groups existed still opens ungrouped",
+          {
+              let old = #"{"width":1280,"height":720,"layers":[{"kind":{"text":{"_0":{"text":"HI"}}}}]}"#
+              guard let decoded = try? JSONDecoder().decode(
+                  ThumbDocument.self, from: Data(old.utf8)) else { return false }
+              return decoded.groups.isEmpty && decoded.layers[0].groupID == nil
+          }())
+
+    check("renaming sticks and an empty name falls back",
+          {
+              var named = d
+              named.renameGroup(gid!, to: "Character")
+              let first = named.groupName(gid!) == "Character"
+              named.renameGroup(gid!, to: "")
+              return first && named.groupName(gid!) == "Group"
+          }())
+
+    // Everything downstream rides on expandedSelection, so prove one verb.
+    check("nudging a group moves every member",
+          {
+              var moved = d
+              let before = moved.layers.map(\.x)
+              _ = moved.nudge(ids: moved.expandedSelection([moved.layers[2].id]),
+                              dx: 0.05, dy: 0)
+              let after = moved.layers.map(\.x)
+              let changed = zip(before, after).filter { abs($0 - $1) > 0.001 }.count
+              return changed == 2
+          }(), "select one, move two")
+}
+
 section("Layer effects")
 do {
     func render(_ doc: ThumbDocument) -> NSBitmapImageRep? {

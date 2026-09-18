@@ -155,6 +155,16 @@ struct ThumbLayerCommands: Commands {
                 .keyboardShortcut("[", modifiers: [.command, .option])
                 .disabled(!router.hasSelection)
             Divider()
+            // The pair every editor binds to these two, and the reason the
+            // selection expands on a click: once a group is one selection,
+            // every verb above already works on it.
+            Button("Group") { actions?.groupSelection() }
+                .keyboardShortcut("g", modifiers: .command)
+                .disabled(!router.canGroup)
+            Button("Ungroup") { actions?.ungroupSelection() }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(!router.canUngroup)
+            Divider()
             // No key equivalent on purpose. Every mnemonic near this one is
             // taken, and inventing a bad one to fill the column is how ⌘R and
             // ⌘L came to be advertised in tooltips for verbs that were not
