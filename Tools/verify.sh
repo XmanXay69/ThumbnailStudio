@@ -70,10 +70,12 @@ swiftc -O -o "$BIN" \
   ThumbKit/Core/HexColor.swift \
   ThumbKit/Core/EditingPrimitives.swift \
   ThumbKit/Services/ThumbnailRenderer.swift \
+  ThumbKit/Services/ImageAspectCache.swift \
   ThumbKit/Services/ThumbAssets.swift \
   ThumbKit/Services/ThumbFrameSource.swift \
   ThumbKit/Services/ThumbStore.swift \
   ThumbKit/Services/ThumbLibrary.swift \
+  ThumbKit/Services/ThumbFavourites.swift \
   ThumbKit/Services/ThumbCritic.swift \
   ThumbKit/Models/ThumbComposition.swift \
   ThumbKit/Services/ThumbCanvasReader.swift \

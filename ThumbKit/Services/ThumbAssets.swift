@@ -40,7 +40,19 @@ enum ThumbAssets {
         return store(data: png, suffix: suffix)
     }
 
-    /// Deletes generated images no design points at any more.
+    /// Whether this file is something the app MADE, as opposed to something
+    /// the user brought in.
+    ///
+    /// The distinction matters because only one of them is safe to delete. A
+    /// cutout or a frame grab can be made again from its source; an image you
+    /// picked, pasted or dropped cannot be made again by anything, and once
+    /// this folder is the copy your designs point at, deleting it is deleting
+    /// your picture.
+    static func isGenerated(_ filename: String) -> Bool {
+        filename.hasPrefix("cutout-") || filename.hasPrefix("grab-")
+    }
+
+    /// Deletes GENERATED images no design points at any more.
     ///
     /// Every nudge of an edge slider writes a new cutout, because they are
     /// keyed by their settings so going back to a value you already tried is
@@ -49,6 +61,12 @@ enum ThumbAssets {
     /// design or project thumbnail document names it — nothing is deleted on a
     /// guess about age, because a cutout a design still uses can't be
     /// regenerated without re-running Vision on a source that may have moved.
+    ///
+    /// Imported images are never touched, whatever their age and whether or not
+    /// anything points at them. This used to delete them: import a photo, drop
+    /// the layer, come back tomorrow, and the file was gone — which also meant
+    /// the library could not honestly claim to hold everything you had brought
+    /// into the app, because it did not.
     @discardableResult
     static func pruneUnreferenced() -> Int {
         let fm = FileManager.default
@@ -87,7 +105,8 @@ enum ThumbAssets {
         // touched in the last day stays.
         let cutoff = Date().addingTimeInterval(-86_400)
         var removed = 0
-        for file in files where !referenced.contains(file.path) {
+        for file in files where !referenced.contains(file.path)
+            && isGenerated(file.lastPathComponent) {
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast
             guard modified < cutoff else { continue }

@@ -20,6 +20,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     /// undo, the menu bar) reads the same state. Observed here so a change
     /// made from a menu item repaints the canvas.
     @ObservedObject var editor: ThumbEditorModel<Store>
+    /// Observed so that a layer's selection box, drawn at its stored height
+    /// while the real aspect was still being read, redraws when it arrives.
+    @ObservedObject private var aspects = ImageAspectCache.shared
     @Environment(\.undoManager) private var undoManager
     @FocusState var editingTextLayer: UUID?
 
@@ -28,13 +31,22 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var croppingLayerID: UUID?
     @State var showFramePicker = false
     @State var showExport = false
-    @State var showLibrary = false
+    /// Remembered across launches: a panel you opened is a panel you want,
+    /// and re-opening it every session is the kind of small friction that
+    /// makes a tool feel like it is not listening.
+    @AppStorage("thumbStudio.libraryOpen") var showLibrary = false
     @State var showReview = false
     @State var showLayouts = false
     @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
     @State var resizeDraft: (id: UUID, width: Double)?
     @State var isDropTargeted = false
+    /// Which render is current. A canvas render now happens off the main
+    /// thread, so a slow one of an OLD document can finish after a fast one of
+    /// a new document — and would paint stale pixels over fresh ones. Each
+    /// request takes the next token and throws its result away if it is no
+    /// longer the newest.
+    @State var renderToken = 0
     @State var guideX: Double?
     @State var guideY: Double?
 
@@ -74,6 +86,12 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
         HStack(spacing: 0) {
             toolRail
             StudioVRule()
+            if showLibrary {
+                LibraryPanel(onInsert: { path in
+                    addLayer(.image(ImageSpec(path: path)), action: "Add Image")
+                }, onClose: { showLibrary = false })
+                StudioVRule()
+            }
             layersPanel
                 .frame(width: Studio.Metric.layersWidth)
             StudioVRule()
@@ -89,7 +107,7 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             store.timelineUndoManager = undoManager
             ThumbKeyRouter.shared.previewHandler = { showPreview = true }
             ThumbKeyRouter.shared.reviewHandler = { showReview = true }
-            ThumbKeyRouter.shared.libraryHandler = { showLibrary = true }
+            ThumbKeyRouter.shared.libraryHandler = { showLibrary.toggle() }
             ThumbKeyRouter.shared.layoutsHandler = { showLayouts = true }
             ThumbKeyRouter.shared.canvasWidth = doc.width
             ThumbKeyRouter.shared.canvasHeight = doc.height
@@ -152,11 +170,6 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                 apply(document, action)
             }
         }
-        .sheet(isPresented: $showLibrary) {
-            AssetLibrarySheet { path in
-                addLayer(.image(ImageSpec(path: path)), action: "Add Image")
-            }
-        }
         .sheet(isPresented: $showPreview) {
             PlatformPreviewSheet(document: doc, image: canvasImage, title: previewTitle)
         }
@@ -178,7 +191,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             StudioDivider().padding(.horizontal, Studio.Space.s)
             StudioIconButton("crop", help: "Crop & cut") { beginCrop() }
                 .disabled(!selectedIsImage)
-            StudioIconButton("photo.stack", help: "Library  ⌘L") { showLibrary = true }
+            StudioIconButton("photo.stack", help: "Library  ⌘L",
+                             isActive: showLibrary) { showLibrary.toggle() }
             StudioIconButton("checklist", help: "Review this thumbnail  ⌘R") {
                 showReview = true
             }
@@ -267,7 +281,16 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     // MARK: - Rendering
 
     func rerender() {
-        canvasImage = ThumbnailRenderer.renderForStudio(doc)
+        let snapshot = doc
+        renderToken &+= 1
+        let token = renderToken
+        Task { @MainActor in
+            let image = await Task.detached(priority: .userInitiated) {
+                ThumbnailRenderer.renderForStudio(snapshot)
+            }.value
+            guard token == renderToken else { return }
+            canvasImage = image
+        }
     }
 
     func apply(_ document: ThumbDocument, _ action: String) {

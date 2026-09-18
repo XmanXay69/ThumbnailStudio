@@ -149,8 +149,12 @@ struct ComposeSheet: View {
         let source = document
         let provider: ThumbnailRenderer.ImageProvider = { AdjustedImageCache.shared.image(for: $0) }
 
-        let reading = ThumbCanvasReader.read(source, provider: provider)
-        let found = ThumbComposer.layouts(for: source, reading: reading, provider: provider)
+        // Off the main thread now that the renderer is nonisolated: reading a
+        // canvas renders it twice and walks both bitmaps.
+        let found = await Task.detached(priority: .userInitiated) { () -> [ThumbComposer.Layout] in
+            let reading = ThumbCanvasReader.read(source, provider: provider)
+            return ThumbComposer.layouts(for: source, reading: reading, provider: provider)
+        }.value
         layouts = found
         loading = false
         // Let the grid paint before the renders start, so the sheet appears
@@ -162,8 +166,9 @@ struct ComposeSheet: View {
             let scale = 480.0 / Double(max(1, source.width))
             small.width = ThumbDocument.clampedDimension(Double(source.width) * scale)
             small.height = ThumbDocument.clampedDimension(Double(source.height) * scale)
-            if let image = ThumbnailRenderer.render(small, showingPlaceholders: false,
-                                                    provider: provider) {
+            if let image = await Task.detached(priority: .userInitiated, operation: {
+                ThumbnailRenderer.render(small, showingPlaceholders: false, provider: provider)
+            }).value {
                 previews[layout.id] = image
             }
             await Task.yield()

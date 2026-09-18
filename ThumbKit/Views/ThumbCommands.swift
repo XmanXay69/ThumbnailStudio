@@ -171,7 +171,7 @@ struct ThumbLayerCommands: Commands {
             Button("Review Thumbnail…") { ThumbKeyRouter.shared.reviewHandler?() }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(noEditor)
-            Button("Library…") { ThumbKeyRouter.shared.libraryHandler?() }
+            Button("Show Library") { ThumbKeyRouter.shared.libraryHandler?() }
                 .keyboardShortcut("l", modifiers: .command)
                 .disabled(noEditor)
             Divider()

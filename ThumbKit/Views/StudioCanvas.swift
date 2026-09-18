@@ -238,8 +238,10 @@ extension ThumbnailStudioPane {
             measured,
             in: CGSize(width: Double(doc.width), height: Double(doc.height)),
             provider: { spec in
-                // Only the size matters here, so a cached 1x1 stand-in of the
-                // right aspect is enough and keeps the file off the main thread.
+                // Only the size matters here, so a stand-in of the right
+                // aspect is enough. The cache answers from memory or not at
+                // all — a nil here means "not read yet", and the renderer
+                // falls back to the layer's stored height for a frame.
                 guard let aspect = ImageAspectCache.shared.aspect(of: spec.effectivePath)
                 else { return nil }
                 return NSImage(size: NSSize(width: 1000, height: 1000 * aspect))
@@ -247,30 +249,3 @@ extension ThumbnailStudioPane {
     }
 }
 
-/// Height over width for an image file, read once. Uses ImageIO so it reads
-/// the header rather than decoding the whole bitmap.
-@MainActor
-final class ImageAspectCache {
-    static let shared = ImageAspectCache()
-    private var cache: [String: Double?] = [:]
-
-    func aspect(of path: String) -> Double? {
-        guard !path.isEmpty else { return nil }
-        if let hit = cache[path] { return hit }
-        let value: Double? = {
-            guard let source = CGImageSourceCreateWithURL(
-                    URL(fileURLWithPath: path) as CFURL, nil),
-                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                    as? [CFString: Any],
-                  let width = properties[kCGImagePropertyPixelWidth] as? Double,
-                  let height = properties[kCGImagePropertyPixelHeight] as? Double,
-                  width > 0 else { return nil }
-            return height / width
-        }()
-        cache[path] = value
-        if cache.count > 500 { cache.removeAll() }
-        return value
-    }
-
-    func invalidate() { cache.removeAll() }
-}

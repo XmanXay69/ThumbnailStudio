@@ -108,6 +108,10 @@ public enum Studio {
 
         public static let toolRailWidth: CGFloat = 44
         public static let layersWidth:   CGFloat = 220
+        /// Wide enough for two columns of image cards AND four filter tabs.
+        /// At 248 it fitted neither: the grid collapsed to a single column and
+        /// "Uploaded" truncated to "Upload…".
+        public static let libraryWidth:  CGFloat = 288
         public static let inspectorWidth: CGFloat = 268
         public static let topBarHeight:  CGFloat = 44
         public static let statusBarHeight: CGFloat = 22

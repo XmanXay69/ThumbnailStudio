@@ -10,10 +10,10 @@ enum ThumbnailRenderer {
     /// synthetic images instead of touching disk.
     typealias ImageProvider = (ImageSpec) -> NSImage?
 
-    /// The app's provider — main-actor because the cache is. The renderer
-    /// itself stays nonisolated so the harness can drive it with synthetic
-    /// providers.
-    @MainActor
+    /// The app's provider. Nonisolated, like the renderer it feeds, so a
+    /// canvas render can happen off the main thread — decoding a 4K JPEG is
+    /// tens of milliseconds on a good day and unbounded on a bad one, and
+    /// neither belongs on the thread that draws the window.
     static func renderForStudio(_ document: ThumbDocument) -> NSImage? {
         render(document, showingPlaceholders: true) { spec in
             AdjustedImageCache.shared.image(for: spec)
@@ -659,8 +659,11 @@ extension ThumbnailRenderer {
 
 /// Adjusted layer images, cached by spec — sliders re-render the canvas per
 /// tick, and Core Image work shouldn't happen per tick per layer.
-@MainActor
-final class AdjustedImageCache {
+///
+/// Not main-actor-confined: both caches are `NSCache`, which is documented
+/// thread-safe, and confining them to the main actor was what forced the whole
+/// canvas render onto the main thread with them.
+final class AdjustedImageCache: @unchecked Sendable {
     static let shared = AdjustedImageCache()
     private let cache = NSCache<NSString, NSImage>()
     private let originals = NSCache<NSString, NSImage>()

@@ -278,7 +278,10 @@ extension ThumbnailStudioPane {
                     .focused($editingTextLayer, equals: id)
                     .onExitCommand { editingTextLayer = nil }
                 StudioRow("Font") {
-                    StudioFontMenu(selection: textBinding(id, spec, \.fontName, "Font"))
+                    HStack(spacing: Studio.Space.xs) {
+                        StudioFontMenu(selection: textBinding(id, spec, \.fontName, "Font"))
+                        StudioFontStar(family: spec.fontName)
+                    }
                 }
                 // Only offered when the family actually has faces to choose
                 // between, which most system families do and most single-face
@@ -623,8 +626,19 @@ struct StudioSizeMenu: View {
 struct StudioFontMenu: View {
     @Binding var selection: String
 
+    @ObservedObject private var favourites = ThumbFavourites.shared
+
     var body: some View {
         Menu {
+            // Starred first. Four hundred installed families is a scroll, and
+            // a channel uses three of them.
+            if !favourites.fonts.isEmpty {
+                Section("Starred") {
+                    ForEach(favourites.fonts, id: \.self) { name in
+                        Button(name) { selection = name }
+                    }
+                }
+            }
             Section("Thumbnail picks") {
                 ForEach(ThumbFonts.picks, id: \.self) { name in
                     Button(name) { selection = name }
@@ -644,5 +658,29 @@ struct StudioFontMenu: View {
         }
         .menuStyle(.borderlessButton)
         .frame(height: Studio.Metric.controlS)
+    }
+}
+
+/// Stars the family the selected layer is using. Sits beside the font menu
+/// rather than inside it: a menu row that toggles a star has to close the menu
+/// to show you it worked, which is the opposite of what you wanted.
+struct StudioFontStar: View {
+    let family: String
+
+    @ObservedObject private var favourites = ThumbFavourites.shared
+
+    var body: some View {
+        Button {
+            favourites.toggleFont(family)
+        } label: {
+            Image(systemName: favourites.hasFont(family) ? "star.fill" : "star")
+                .font(Studio.Typo.iconSmall)
+                .foregroundStyle(favourites.hasFont(family)
+                                 ? Studio.Palette.accent : Studio.Palette.textTertiary)
+        }
+        .buttonStyle(.plain)
+        .frame(width: Studio.Metric.controlXS, height: Studio.Metric.controlS)
+        .help(favourites.hasFont(family)
+              ? "Unstar \(family)" : "Star \(family) so it stays at the top of the font menu")
     }
 }

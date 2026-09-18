@@ -3315,11 +3315,23 @@ do {
           a.deletingLastPathComponent().lastPathComponent == "ThumbAssets"
               && !a.path.hasPrefix(NSTemporaryDirectory()))
 
+    check("the store can tell what it generated from what it was given",
+          ThumbAssets.isGenerated("cutout-abc123.png")
+              && ThumbAssets.isGenerated("grab-abc123-1000.png")
+              && !ThumbAssets.isGenerated("abc123.png"),
+          "the filename is the only provenance record there is")
+
     // Pruning must never take a file a design still points at — a cutout
-    // cannot be regenerated if its source has since moved.
-    let keep = ThumbAssets.store(data: Data("kept-asset".utf8), suffix: "keep")
-    let drop = ThumbAssets.store(data: Data("dropped-asset".utf8), suffix: "drop")
-    if let keep, let drop {
+    // cannot be regenerated if its source has since moved — and must never
+    // take an imported image at all.
+    let keep = ThumbAssets.cutoutURL(for: sourcePath, tag: "verify-keep")
+    let drop = ThumbAssets.cutoutURL(for: sourcePath, tag: "verify-drop")
+    try? Data("kept-cutout".utf8).write(to: keep)
+    try? Data("dropped-cutout".utf8).write(to: drop)
+    let upload = ThumbAssets.store(data: Data("an-image-the-user-brought-in".utf8),
+                                   suffix: "upload")
+    if FileManager.default.fileExists(atPath: keep.path),
+       FileManager.default.fileExists(atPath: drop.path), let upload {
         var referencing = ThumbDocument()
         var spec = ImageSpec(path: "/somewhere/original.png")
         spec.cutoutPath = keep.path
@@ -3344,23 +3356,243 @@ do {
         }
         age(keep)
         age(drop)
+        age(upload)
         ThumbAssets.pruneUnreferenced()
-        check("pruning keeps an old asset a design still points at",
+        check("pruning keeps an old cutout a design still points at",
               FileManager.default.fileExists(atPath: keep.path))
-        check("pruning removes an old asset nothing points at",
+        check("pruning removes an old cutout nothing points at",
               !FileManager.default.fileExists(atPath: drop.path))
+        // The one an image library depends on. A generated file can be made
+        // again; a photo you imported cannot, and deleting it is deleting the
+        // picture your library promises to still be holding.
+        check("pruning never removes an imported image, however old and unused",
+              FileManager.default.fileExists(atPath: upload.path),
+              "the library cannot claim to hold everything you brought in if this deletes it")
 
         try? FileManager.default.removeItem(at: designURL)
         age(keep)
         ThumbAssets.pruneUnreferenced()
-        check("once the design is gone, so is its asset",
+        check("once the design is gone, so is its cutout",
               !FileManager.default.fileExists(atPath: keep.path))
+        try? FileManager.default.removeItem(at: upload)
     } else {
-        check("pruning keeps an asset a design still points at", false)
-        check("pruning removes an asset nothing points at", false)
-        check("once the design is gone, so is its asset", false)
+        check("pruning keeps an old cutout a design still points at", false)
+        check("pruning removes an old cutout nothing points at", false)
+        check("pruning never removes an imported image, however old and unused", false)
+        check("once the design is gone, so is its cutout", false)
     }
     try? FileManager.default.removeItem(atPath: sourcePath)
+}
+
+section("Off the main thread")
+do {
+    /// The harness's top-level code runs on the main thread but is not
+    /// main-actor isolated, so reaching a @MainActor cache means saying so.
+    func onMain<T>(_ body: @MainActor () -> T) -> T { MainActor.assumeIsolated { body() } }
+
+    /// Pumps the main runloop until `condition` holds, so work hopped back to
+    /// the main actor can actually land inside a synchronous harness.
+    func waitFor(_ seconds: Double, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        return condition()
+    }
+
+    // A named pipe with no writer is a file whose open() never returns — the
+    // same condition as an evicted iCloud file or a sleeping drive, which is
+    // what froze the app with a 0x0 window. Asking about one must come straight
+    // back, or SwiftUI's layout pass is stuck in the kernel.
+    let fifo = NSTemporaryDirectory() + "/verify-unopenable.fifo"
+    unlink(fifo)
+    let made = mkfifo(fifo, 0o644) == 0
+    if made {
+        let started = ProcessInfo.processInfo.systemUptime
+        let answer = onMain { ImageAspectCache.shared.aspect(of: fifo) }
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        check("asking about a file that never opens returns immediately",
+              elapsed < 0.25 && answer == nil,
+              String(format: "%.0f ms", elapsed * 1000))
+        // Let the background reader out of the kernel so the harness can exit.
+        DispatchQueue.global().async {
+            let fd = open(fifo, O_WRONLY)
+            if fd >= 0 { close(fd) }
+        }
+        _ = waitFor(1.0) { false }
+        unlink(fifo)
+    } else {
+        check("asking about a file that never opens returns immediately", false,
+              "could not create the fifo")
+    }
+
+    // And a readable file must still produce the right number, just later.
+    let square = NSImage(size: NSSize(width: 200, height: 100), flipped: false) { rect in
+        NSColor.white.setFill(); rect.fill(); return true
+    }
+    let aspectPath = NSTemporaryDirectory() + "/verify-aspect.png"
+    if let tiff = square.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+       let png = rep.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: aspectPath))
+        check("the header read itself is right", 
+              (ImageAspectCache.readAspect(aspectPath).map { abs($0 - 0.5) < 0.01 }) == true,
+              "200x100 is an aspect of 0.5")
+        onMain { ImageAspectCache.shared.invalidate() }
+        let first = onMain { ImageAspectCache.shared.aspect(of: aspectPath) }
+        check("the first ask is a miss, not a disk read on this thread", first == nil)
+        let landed = waitFor(3.0) {
+            (onMain { ImageAspectCache.shared.cached(aspectPath) } ?? nil) != nil
+        }
+        check("the answer arrives without anyone asking again", landed)
+        check("and it is the right answer",
+              (onMain { ImageAspectCache.shared.aspect(of: aspectPath) }.map { abs($0 - 0.5) < 0.01 }) == true)
+        try? FileManager.default.removeItem(atPath: aspectPath)
+    } else {
+        check("the header read itself is right", false)
+        check("the first ask is a miss, not a disk read on this thread", false)
+        check("the answer arrives without anyone asking again", false)
+        check("and it is the right answer", false)
+    }
+
+    // The canvas render now happens off the main thread. AppKit drawing into an
+    // NSBitmapImageRep is supported there, but font resolution goes through
+    // NSFontManager, so this is proved rather than assumed: the same document
+    // rendered on both threads must produce the same pixels, or exports and
+    // previews would silently disagree depending on who drew them.
+    var threaded = ThumbDocument()
+    threaded.width = 320; threaded.height = 180
+    threaded.backgroundHex = "203040"
+    var headline = TextSpec(text: "OFF MAIN")
+    headline.sizeFraction = 0.3
+    headline.strokeWidth = 8
+    var panel = ShapeSpec(shape: "rectangle")
+    panel.fillHex = "CC2222"
+    threaded.layers = [
+        ThumbLayer(kind: .shape(panel), x: 0.3, y: 0.6, widthFraction: 0.4, heightFraction: 0.3),
+        ThumbLayer(kind: .text(headline), x: 0.5, y: 0.4, widthFraction: 0.9),
+    ]
+
+    func samples(_ image: NSImage?) -> [Double] {
+        guard let image, let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return [] }
+        var out: [Double] = []
+        for y in stride(from: 2, to: rep.pixelsHigh, by: 7) {
+            for x in stride(from: 2, to: rep.pixelsWide, by: 7) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                out.append(c.redComponent + c.greenComponent * 2 + c.blueComponent * 3)
+            }
+        }
+        return out
+    }
+
+    let onMain = ThumbnailRenderer.render(threaded, showingPlaceholders: false) { _ in nil }
+    var offMain: NSImage?
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .userInitiated).async {
+        offMain = ThumbnailRenderer.render(threaded, showingPlaceholders: false) { _ in nil }
+        done.signal()
+    }
+    let finished = done.wait(timeout: .now() + 10) == .success
+    check("a render off the main thread finishes at all", finished && offMain != nil)
+    let a = samples(onMain), b = samples(offMain)
+    check("it draws the same pixels as one on the main thread",
+          !a.isEmpty && a.count == b.count && zip(a, b).allSatisfy { abs($0 - $1) < 0.02 },
+          "\(a.count) sample points, text and shape included")
+
+    // Two renders racing: the newer document must win regardless of which
+    // finishes first. This is the failure the token in the pane prevents, and
+    // the arithmetic of it is worth stating here.
+    var newer = threaded
+    newer.backgroundHex = "00FF00"
+    var results: [Int: NSImage?] = [:]
+    let group = DispatchGroup()
+    for (index, document) in [threaded, newer].enumerated() {
+        group.enter()
+        DispatchQueue.global().async {
+            let image = ThumbnailRenderer.render(document, showingPlaceholders: false) { _ in nil }
+            DispatchQueue.main.async { results[index] = image; group.leave() }
+        }
+    }
+    _ = waitFor(10) { results.count == 2 }
+    check("concurrent renders of different documents stay distinct",
+          samples(results[0] ?? nil) != samples(results[1] ?? nil),
+          "if these matched, one render would be clobbering the other's buffer")
+}
+
+section("Library and favourites")
+do {
+    // Favourites are two lists of strings in one small file, so the things
+    // worth checking are that a toggle is a toggle and that the file round
+    // trips — a star that does not survive relaunch is not a star.
+    var set = ThumbFavouriteSet()
+    check("starring is off by default", !set.hasFont("Impact") && !set.hasAsset("/a.png"))
+    check("starring returns its new state", set.toggleFont("Impact") == true)
+    check("a starred font reads back", set.hasFont("Impact"))
+    check("starring twice unstars", set.toggleFont("Impact") == false && !set.hasFont("Impact"))
+    set.toggleFont("Impact")
+    set.toggleFont("Futura")
+    check("order is the order you starred them, not alphabetical",
+          set.fonts == ["Impact", "Futura"],
+          "a list that reshuffles is a list you have to re-read")
+    set.toggleAsset("/tmp/one.png")
+    set.toggleAsset("/tmp/two.png")
+    set.toggleAsset("/tmp/one.png")
+    check("unstarring removes only that entry", set.assets == ["/tmp/two.png"])
+
+    let favURL = URL(fileURLWithPath: NSTemporaryDirectory() + "/verify-favourites.json")
+    try? FileManager.default.removeItem(at: favURL)
+    check("a missing favourites file reads as empty, not as a failure",
+          ThumbFavouritesFile.load(from: favURL) == ThumbFavouriteSet())
+    ThumbFavouritesFile.save(set, to: favURL)
+    check("favourites survive being written and read back",
+          ThumbFavouritesFile.load(from: favURL) == set)
+    try? Data("{ not json".utf8).write(to: favURL)
+    check("a corrupt favourites file reads as empty rather than crashing",
+          ThumbFavouritesFile.load(from: favURL) == ThumbFavouriteSet())
+    try? FileManager.default.removeItem(at: favURL)
+
+    // A font uninstalled or an image deleted must not pin a dead row to the
+    // top of a menu for ever.
+    let stale = ThumbFavouriteSet(fonts: ["Impact", "NotAFontOnThisMac"],
+                                  assets: ["/tmp/gone.png", "/tmp/here.png"])
+    let cleaned = stale.pruned(installedFonts: ["Impact"],
+                               fileExists: { $0 == "/tmp/here.png" })
+    check("pruning drops uninstalled fonts and missing files",
+          cleaned.fonts == ["Impact"] && cleaned.assets == ["/tmp/here.png"])
+
+    // The library's job is to hold everything the app has, and the half it
+    // used to miss was the store itself: an image imported and then removed
+    // from the design still exists, and was invisible.
+    let orphan = ThumbAssets.store(data: Data("verify-orphan-image".utf8), suffix: "orphan")
+    let generated = ThumbAssets.cutoutURL(for: NSTemporaryDirectory() + "/verify-lib.png",
+                                          tag: "verify-lib")
+    try? Data("verify-generated".utf8).write(to: generated)
+    if let orphan {
+        let stored = ThumbLibrary.storedAssets()
+        check("an imported image no design points at is still in the library",
+              stored.contains { $0.path == orphan.path },
+              "this is the whole complaint: the file was there, the list was not")
+        check("an import is labelled as one",
+              stored.first { $0.path == orphan.path }?.source == .imported)
+        check("a cutout is labelled as a cutout, not as something you uploaded",
+              stored.first { $0.path == generated.path }?.source == .cutout)
+        check("everything the library lists actually exists on disk",
+              ThumbLibrary.all().allSatisfy { $0.exists })
+        check("nothing is listed twice",
+              {
+                  let paths = ThumbLibrary.all().map(\.path)
+                  return Set(paths).count == paths.count
+              }(), "the same file can be filed, stored and referenced by a design")
+        try? FileManager.default.removeItem(at: orphan)
+    } else {
+        check("an imported image no design points at is still in the library", false)
+        check("an import is labelled as one", false)
+        check("a cutout is labelled as a cutout, not as something you uploaded", false)
+        check("everything the library lists actually exists on disk", false)
+        check("nothing is listed twice", false)
+    }
+    try? FileManager.default.removeItem(at: generated)
 }
 
 section("Layer verbs the keyboard drives")

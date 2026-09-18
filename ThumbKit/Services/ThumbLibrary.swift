@@ -21,7 +21,28 @@ enum ThumbLibrary {
         var modifiedAt: Date
         var source: Source
 
-        enum Source: String { case folder, recent }
+        enum Source: String {
+            /// A file you filed yourself, under the Assets folder.
+            case folder
+            /// Brought into the app's own storage — picked, pasted, or dropped.
+            case imported
+            /// A subject lifted by Remove Background.
+            case cutout
+            /// A frame grabbed off a video timeline.
+            case frame
+            /// Referenced by a saved design but living somewhere else on disk.
+            case recent
+
+            var label: String {
+                switch self {
+                case .folder: return "filed"
+                case .imported: return "uploaded"
+                case .cutout: return "cutout"
+                case .frame: return "frame"
+                case .recent: return "used before"
+                }
+            }
+        }
 
         var url: URL { URL(fileURLWithPath: path) }
         var exists: Bool { FileManager.default.fileExists(atPath: path) }
@@ -81,12 +102,85 @@ enum ThumbLibrary {
         return found
     }
 
-    /// Everything, folder first, with recents that are already in the folder
-    /// filtered out so nothing appears twice.
+    /// What the app itself is holding: every image brought in through a pick,
+    /// a paste or a drop, plus the cutouts and frame grabs it generated.
+    ///
+    /// This is the half the library used to miss entirely. `recentAssets`
+    /// only finds images a SAVED DESIGN still points at, so an image you
+    /// imported and then deleted the layer for had vanished from the library
+    /// while the file sat in the store the whole time.
+    static func storedAssets() -> [Asset] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: ThumbAssets.root,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]) else { return [] }
+
+        return files.compactMap { url -> Asset? in
+            guard imageExtensions.contains(url.pathExtension.lowercased()) else { return nil }
+            let file = url.lastPathComponent
+            // The store names things by what made them, so the name is the
+            // only provenance record there is — and the only way to tell an
+            // image you chose from one the app generated for you.
+            let source: Asset.Source = file.hasPrefix("cutout-") ? .cutout
+                : file.hasPrefix("grab-") ? .frame : .imported
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            return Asset(path: url.path,
+                         name: displayName(for: url, source: source),
+                         tag: nil, modifiedAt: modified, source: source)
+        }
+        .sorted { $0.modifiedAt > $1.modifiedAt }
+    }
+
+    /// A content-addressed filename is a hash, which tells you nothing. Where
+    /// a saved design gives one a real name, use that instead.
+    private static func displayName(for url: URL, source: Asset.Source) -> String {
+        if let known = storedNames()[url.path] { return known }
+        switch source {
+        case .cutout: return "Cutout"
+        case .frame: return "Frame"
+        default: return url.deletingPathExtension().lastPathComponent
+        }
+    }
+
+    /// Names recovered from the layer names in saved designs, so an imported
+    /// file that once carried a filename keeps it.
+    private static func storedNames() -> [String: String] {
+        if let cached = nameCache { return cached }
+        var found: [String: String] = [:]
+        for design in StandaloneThumbStore.designs() {
+            guard let data = try? Data(contentsOf: design.url),
+                  let document = try? JSONDecoder().decode(ThumbDocument.self, from: data)
+            else { continue }
+            for layer in document.layers {
+                guard case .image(let spec) = layer.kind, !layer.name.isEmpty else { continue }
+                found[spec.path] = layer.name
+                if let cutout = spec.cutoutPath { found[cutout] = layer.name + " cutout" }
+            }
+        }
+        nameCache = found
+        return found
+    }
+
+    /// Cleared whenever the library is rescanned, which is the only time it
+    /// could be stale.
+    private nonisolated(unsafe) static var nameCache: [String: String]?
+
+    static func invalidate() { nameCache = nil }
+
+    /// Everything, deduplicated by path: what you filed, what the app is
+    /// holding, and what your designs point at elsewhere.
     static func all() -> [Asset] {
-        let folder = folderAssets()
-        let filed = Set(folder.map(\.path))
-        return folder + recentAssets().filter { !filed.contains($0.path) }
+        invalidate()
+        var seen = Set<String>()
+        var out: [Asset] = []
+        for asset in folderAssets() + storedAssets() + recentAssets()
+        where !seen.contains(asset.path) {
+            seen.insert(asset.path)
+            out.append(asset)
+        }
+        return out
     }
 
     static func tags(in assets: [Asset]) -> [String] {
