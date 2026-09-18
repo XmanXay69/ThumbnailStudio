@@ -219,11 +219,19 @@ enum ThumbComposer {
                               provider: ThumbnailRenderer.ImageProvider) -> CGRect {
         let canvas = CGSize(width: Double(document.width), height: Double(document.height))
         var rect = inkBounds(layer, in: document, provider: provider)
+        var pixels = 0.0
         if case .text(let spec) = layer.kind {
             // Both are authored in pixels at 720 high and scale with the canvas,
             // exactly as the renderer scales them.
-            let pixels = spec.strokeWidth * canvas.height / 720
+            pixels += spec.strokeWidth * canvas.height / 720
                 + (spec.boxEnabled ? spec.boxPadding * canvas.height / 720 : 0)
+        }
+        // A glow paints well outside the glyphs, and it is authored at 720p
+        // like everything else here. Leaving it out would let auto-layout park
+        // a haloed headline whose halo runs under the duration badge and call
+        // it clear.
+        pixels += layer.effects.outerReach * canvas.height / 720
+        if pixels > 0 {
             rect = rect.insetBy(dx: -pixels / canvas.width, dy: -pixels / canvas.height)
         }
         guard abs(layer.rotationDegrees) > 0.01 else { return rect }

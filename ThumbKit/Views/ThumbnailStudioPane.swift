@@ -259,6 +259,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     /// arguments the developer passed on the command line.
     private func openLaunchSheet() {
         let arguments = CommandLine.arguments
+        if let pick = arguments.firstIndex(of: "--select"), pick + 1 < arguments.count,
+           let which = Int(arguments[pick + 1]), doc.layers.indices.contains(which) {
+            let id = doc.layers[which].id
+            DispatchQueue.main.async { editor.selection = [id] }
+        }
         guard let index = arguments.firstIndex(of: "--sheet"),
               index + 1 < arguments.count else { return }
         let wanted = arguments[index + 1].lowercased()

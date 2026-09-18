@@ -64,8 +64,13 @@ enum ThumbnailRenderer {
             cg?.translateBy(x: center.x, y: center.y)
             cg?.rotate(by: -CGFloat(layer.rotationDegrees) * .pi / 180)
             cg?.translateBy(x: -center.x, y: -center.y)
-            draw(layer, in: size, center: center, provider: provider,
-                 showingPlaceholders: showingPlaceholders)
+            if layer.effects.isActive {
+                drawWithEffects(layer, in: size, center: center, provider: provider,
+                                showingPlaceholders: showingPlaceholders)
+            } else {
+                draw(layer, in: size, center: center, provider: provider,
+                     showingPlaceholders: showingPlaceholders)
+            }
             cg?.restoreGState()
         }
 
@@ -147,7 +152,7 @@ enum ThumbnailRenderer {
         }
     }
 
-    private static func draw(_ layer: ThumbLayer, in size: CGSize,
+    static func draw(_ layer: ThumbLayer, in size: CGSize,
                              center: CGPoint, provider: ImageProvider,
                              showingPlaceholders: Bool) {
         switch layer.kind {
@@ -807,6 +812,295 @@ final class AdjustedImageCache: @unchecked Sendable {
 
     /// One context for every adjustment pass. Building a CIContext per call
     /// is its own measurable cost, and this one is stateless and thread-safe.
-    nonisolated private static let sharedContext =
+    nonisolated static let sharedContext =
         CIContext(options: [.useSoftwareRenderer: false])
+}
+
+// MARK: - Layer effects
+
+extension ThumbnailRenderer {
+    /// Draws a layer with its effects around it.
+    ///
+    /// The layer is rendered once, alone, into its own transparent bitmap, and
+    /// everything after that is derived from that bitmap's ALPHA. That is what
+    /// makes one implementation serve all three layer kinds: a glow does not
+    /// need to know whether it is haloing a glyph, a cutout or a polygon, only
+    /// where the layer put paint.
+    ///
+    /// Rendered unrotated on purpose. The canvas context already carries the
+    /// layer's rotation when this is called, so compositing the finished image
+    /// through it rotates the effects with the layer — which is what you want,
+    /// and what building the glow in canvas space would have got wrong.
+    static func drawWithEffects(_ layer: ThumbLayer, in size: CGSize, center: CGPoint,
+                                provider: ImageProvider, showingPlaceholders: Bool) {
+        guard let rep = isolatedRender(layer, in: size, center: center, provider: provider,
+                                       showingPlaceholders: showingPlaceholders),
+              let cg = rep.cgImage
+        else {
+            // No bitmap to work in; the layer itself still matters more than
+            // its decoration, so draw it plainly rather than not at all.
+            draw(layer, in: size, center: center, provider: provider,
+                 showingPlaceholders: showingPlaceholders)
+            return
+        }
+        let base = CIImage(cgImage: cg)
+
+        // An overlay repaints the layer's colour, and the layer's alpha
+        // includes its stroke — so a gradient over a stroked headline painted
+        // straight over the black outline that keeps the letters apart, and
+        // "DOOMSDAY HEIST" came out as one orange blob. The overlay is masked
+        // to a second render of the same layer with its stroke removed, so it
+        // recolours the letters and leaves the outline alone.
+        var fillMask: CIImage?
+        if layer.effects.hasOverlay, isStroked(layer),
+           let maskRep = isolatedRender(strokeless(layer), in: size, center: center,
+                                        provider: provider, showingPlaceholders: false),
+           let maskCG = maskRep.cgImage {
+            fillMask = CIImage(cgImage: maskCG)
+        }
+
+        let composed = composited(layer.effects, over: base, fillMask: fillMask,
+                                  inked: paintedExtent(of: rep) ?? base.extent,
+                                  canvasHeight: size.height)
+        // The cache's context, deliberately: it is stateless and thread-safe,
+        // and a second CIContext is a second GPU pipeline for no reason.
+        guard let out = AdjustedImageCache.sharedContext.createCGImage(
+            composed, from: base.extent) else { return }
+        NSGraphicsContext.current?.cgContext.draw(
+            out, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+    }
+
+
+
+    /// Draws one layer, alone, into its own transparent bitmap of canvas size.
+    static func isolatedRender(_ layer: ThumbLayer, in size: CGSize, center: CGPoint,
+                               provider: ImageProvider,
+                               showingPlaceholders: Bool) -> NSBitmapImageRep? {
+        let width = Int(size.width.rounded()), height = Int(size.height.rounded())
+        guard width > 0, height > 0,
+              let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let isolated = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = isolated
+        isolated.imageInterpolation = .high
+        draw(layer, in: size, center: center, provider: provider,
+             showingPlaceholders: showingPlaceholders)
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+
+    /// Whether this layer draws an outline that an overlay must not cover.
+    static func isStroked(_ layer: ThumbLayer) -> Bool {
+        switch layer.kind {
+        case .text(let spec): return spec.strokeWidth > 0.1
+        case .image(let spec): return spec.strokeWidth > 0.1 || spec.borderWidth > 0.1
+        case .shape(let spec): return spec.strokeWidth > 0.1
+        }
+    }
+
+    /// The same layer with its outline taken off, for use as an overlay mask.
+    static func strokeless(_ layer: ThumbLayer) -> ThumbLayer {
+        var bare = layer
+        switch layer.kind {
+        case .text(var spec):
+            spec.strokeWidth = 0
+            spec.shadowEnabled = false
+            bare.kind = .text(spec)
+        case .image(var spec):
+            spec.strokeWidth = 0
+            spec.borderWidth = 0
+            spec.shadowEnabled = false
+            bare.kind = .image(spec)
+        case .shape(var spec):
+            spec.strokeWidth = 0
+            bare.kind = .shape(spec)
+        }
+        return bare
+    }
+
+    /// The box the layer actually put pixels in, in Core Image's bottom-left
+    /// space. nil when it painted nothing.
+    ///
+    /// Measured from the bitmap rather than from `drawnBounds`, because a
+    /// gradient has to run across the LETTERS. A text layer's measured box
+    /// includes the line's leading and descender space, so a single line of
+    /// digits occupies only the middle of it — and a yellow-to-pink ramp
+    /// scaled to the box came out yellow-to-orange, never reaching its own
+    /// second colour.
+    static func paintedExtent(of rep: NSBitmapImageRep) -> CGRect? {
+        guard let data = rep.bitmapData, rep.samplesPerPixel == 4 else { return nil }
+        let width = rep.pixelsWide, height = rep.pixelsHigh
+        let rowBytes = rep.bytesPerRow, pixelBytes = rep.bitsPerPixel / 8
+        guard width > 0, height > 0, pixelBytes >= 4 else { return nil }
+        // Every fourth pixel. This is sizing a gradient, not clipping a mask —
+        // a few pixels of slop at the edge is invisible, and a full scan of a
+        // 4K canvas is not.
+        let step = max(1, min(width, height) / 400)
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for row in stride(from: 0, to: height, by: step) {
+            let rowStart = row * rowBytes
+            for column in stride(from: 0, to: width, by: step) {
+                guard data[rowStart + column * pixelBytes + 3] > 8 else { continue }
+                if column < minX { minX = column }
+                if column > maxX { maxX = column }
+                if row < minY { minY = row }
+                if row > maxY { maxY = row }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        // Row 0 of a bitmap rep is the TOP; Core Image counts from the bottom.
+        return CGRect(x: CGFloat(minX),
+                      y: CGFloat(height - maxY - 1),
+                      width: CGFloat(max(1, maxX - minX + 1)),
+                      height: CGFloat(max(1, maxY - minY + 1)))
+    }
+
+    /// The effect stack, bottom to top, in the order a design tool applies it:
+    /// glow behind the layer, then the layer, then the overlays that replace
+    /// its colour, then the inner shadow that sits inside its edge.
+    static func composited(_ effects: LayerEffects, over base: CIImage,
+                           fillMask: CIImage? = nil,
+                           inked: CGRect, canvasHeight: CGFloat) -> CIImage {
+        // What the overlays are allowed to repaint: the layer minus its
+        // outline when it has one, the whole layer otherwise.
+        let paintable = fillMask ?? base
+        // Authored at 720p and scaled, like every other pixel measure here.
+        let scale = Double(canvasHeight) / 720
+        var result = base
+
+        if effects.colorOverlayEnabled, effects.colorOverlayOpacity > 0.001 {
+            let fill = tinted(paintable, hex: effects.colorOverlayHex,
+                              opacity: effects.colorOverlayOpacity)
+            result = fill.applyingFilter("CISourceAtopCompositing",
+                                         parameters: [kCIInputBackgroundImageKey: result])
+        }
+        if effects.gradientOverlayEnabled, effects.gradientOpacity > 0.001 {
+            let ramp = gradient(over: inked, from: effects.gradientFromHex,
+                                to: effects.gradientToHex,
+                                angle: effects.gradientAngleDegrees,
+                                opacity: effects.gradientOpacity)
+            // Masked to the layer's own alpha first, so a gradient on text
+            // fills the letters and not the box around them.
+            let masked = ramp.applyingFilter("CISourceInCompositing",
+                                             parameters: [kCIInputBackgroundImageKey: paintable])
+                .cropped(to: base.extent)
+            result = masked.applyingFilter("CISourceAtopCompositing",
+                                           parameters: [kCIInputBackgroundImageKey: result])
+        }
+        if effects.innerShadowEnabled, effects.innerShadowOpacity > 0.001 {
+            result = withInnerShadow(effects, base: base, over: result, scale: scale)
+        }
+        if effects.glowEnabled, effects.glowRadius > 0.01, effects.glowOpacity > 0.001 {
+            let halo = glow(effects, from: base, scale: scale)
+            result = result.applyingFilter("CISourceOverCompositing",
+                                           parameters: [kCIInputBackgroundImageKey: halo])
+        }
+        return result.cropped(to: base.extent)
+    }
+
+    /// The layer's silhouette in one colour, at one opacity.
+    private static func tinted(_ image: CIImage, hex: String, opacity: Double) -> CIImage {
+        let colour = HexColor.color(hex: hex).usingColorSpace(.deviceRGB) ?? .white
+        return image.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: colour.redComponent),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: colour.greenComponent),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: colour.blueComponent),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity)),
+        ])
+    }
+
+    private static func gradient(over extent: CGRect, from: String, to: String,
+                                 angle: Double, opacity: Double) -> CIImage {
+        let radians: Double = angle * .pi / 180
+        let cosine = CGFloat(cos(radians)), sine = CGFloat(sin(radians))
+        // The box's half-extent measured ALONG the gradient's own direction,
+        // not its longest side. Using the longest side meant a vertical ramp
+        // over wide, short text spanned the text's WIDTH, so the letters only
+        // ever sampled the middle of it and the second colour never arrived.
+        let reach = abs(cosine) * extent.width / 2 + abs(sine) * extent.height / 2
+        let mid = CGPoint(x: extent.midX, y: extent.midY)
+        // 90 degrees runs the FROM colour at the top down to the TO colour at
+        // the bottom, matching `TextSpec.gradientHex`, which is documented as
+        // "fill at the top, this at the bottom". Core Image's y grows upward,
+        // so the from-point is the one that gets +sine.
+        let start = CGPoint(x: mid.x + cosine * reach, y: mid.y + sine * reach)
+        let end = CGPoint(x: mid.x - cosine * reach, y: mid.y - sine * reach)
+        func colour(_ hex: String) -> CIColor {
+            let rgba = HexColor.color(hex: hex).usingColorSpace(.deviceRGB) ?? .white
+            return CIColor(red: rgba.redComponent, green: rgba.greenComponent,
+                           blue: rgba.blueComponent, alpha: CGFloat(opacity))
+        }
+        let ramp = CIFilter(name: "CILinearGradient", parameters: [
+            "inputPoint0": CIVector(cgPoint: start),
+            "inputPoint1": CIVector(cgPoint: end),
+            "inputColor0": colour(from),
+            "inputColor1": colour(to),
+        ])?.outputImage ?? CIImage(color: colour(from))
+        // Aimed across the ink, but not clipped to it: the mask decides where
+        // it shows, and cropping here would cut a glyph that leans outside the
+        // measured box.
+        return ramp
+    }
+
+    /// A blurred, fattened halo of the layer's silhouette.
+    private static func glow(_ effects: LayerEffects, from base: CIImage,
+                             scale: Double) -> CIImage {
+        var halo = tinted(base, hex: effects.glowHex, opacity: 1)
+        let spread = effects.glowSpread * effects.glowRadius * scale
+        if spread > 0.5 {
+            // Fatten before blurring. Blurring thin glyphs on their own
+            // spreads their alpha to almost nothing, so a large radius gave a
+            // faint mist rather than a glow — which is what Photoshop's Spread
+            // exists to fix, and it does it the same way.
+            halo = halo.applyingFilter("CIMorphologyMaximum",
+                                       parameters: ["inputRadius": spread])
+        }
+        // Clamp first: a Gaussian on an image with hard edges at the canvas
+        // bounds darkens them, because everything outside reads as transparent.
+        halo = halo.clampedToExtent()
+            .applyingFilter("CIGaussianBlur",
+                            parameters: ["inputRadius": effects.glowRadius * scale])
+            .cropped(to: base.extent)
+        return halo.applyingFilter("CIColorMatrix", parameters: [
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(effects.glowOpacity)),
+        ])
+    }
+
+    /// Shadow cast INSIDE the layer's edge: the inverse of its own alpha,
+    /// offset and blurred, then clipped back to the layer.
+    private static func withInnerShadow(_ effects: LayerEffects, base: CIImage,
+                                        over result: CIImage, scale: Double) -> CIImage {
+        // alpha' = 1 - alpha, which turns the hole into the caster.
+        let inverted = base.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: -1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+        ])
+        let colour = HexColor.color(hex: effects.innerShadowHex).usingColorSpace(.deviceRGB)
+            ?? .black
+        let radians: Double = effects.innerShadowAngle * .pi / 180
+        let cosine = cos(radians), sine = sin(radians)
+        let distance = effects.innerShadowDistance * scale
+        let caster = inverted
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 0, z: 0, w: colour.redComponent),
+                "inputGVector": CIVector(x: 0, y: 0, z: 0, w: colour.greenComponent),
+                "inputBVector": CIVector(x: 0, y: 0, z: 0, w: colour.blueComponent),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(effects.innerShadowOpacity)),
+            ])
+            .transformed(by: CGAffineTransform(translationX: -cosine * distance,
+                                               y: -sine * distance))
+            .clampedToExtent()
+            .applyingFilter("CIGaussianBlur",
+                            parameters: ["inputRadius": effects.innerShadowRadius * scale])
+            .cropped(to: base.extent)
+        return caster.applyingFilter("CISourceAtopCompositing",
+                                     parameters: [kCIInputBackgroundImageKey: result])
+    }
 }

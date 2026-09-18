@@ -3384,6 +3384,223 @@ do {
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
+section("Layer effects")
+do {
+    func render(_ doc: ThumbDocument) -> NSBitmapImageRep? {
+        guard let image = ThumbnailRenderer.render(doc, showingPlaceholders: false,
+                                                   provider: { _ in nil }),
+              let tiff = image.tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiff)
+    }
+    /// Mean of one channel over a box, so "is there green here" is a number.
+    func mean(_ rep: NSBitmapImageRep?, _ box: CGRect, _ channel: Int) -> Double {
+        guard let rep else { return 0 }
+        var total = 0.0, n = 0.0
+        let x0 = Int(box.minX * Double(rep.pixelsWide)), x1 = Int(box.maxX * Double(rep.pixelsWide))
+        let y0 = Int(box.minY * Double(rep.pixelsHigh)), y1 = Int(box.maxY * Double(rep.pixelsHigh))
+        for y in stride(from: max(0, y0), to: min(rep.pixelsHigh, y1), by: 2) {
+            for x in stride(from: max(0, x0), to: min(rep.pixelsWide, x1), by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                total += [c.redComponent, c.greenComponent, c.blueComponent][channel]
+                n += 1
+            }
+        }
+        return n > 0 ? total / n : 0
+    }
+
+    /// Mean of one channel over exactly the pixels where `bare` painted
+    /// nothing — "what did the effect add OUTSIDE the layer".
+    ///
+    /// Sampling a hand-picked band instead was the first attempt and it
+    /// measured empty canvas: effect radii are authored at 720p and scale with
+    /// the height, so on a short test canvas the glow was six pixels wide and
+    /// nowhere near where the band assumed.
+    func addedOutside(_ bare: NSBitmapImageRep?, _ decorated: NSBitmapImageRep?,
+                      _ channel: Int) -> Double {
+        guard let bare, let decorated,
+              bare.pixelsWide == decorated.pixelsWide else { return 0 }
+        var total = 0.0, n = 0.0
+        for y in stride(from: 0, to: bare.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: bare.pixelsWide, by: 2) {
+                guard let before = bare.colorAt(x: x, y: y),
+                      let after = decorated.colorAt(x: x, y: y) else { continue }
+                // Only where the layer itself put nothing.
+                guard before.redComponent + before.greenComponent
+                        + before.blueComponent < 0.05 else { continue }
+                total += [after.redComponent, after.greenComponent, after.blueComponent][channel]
+                n += 1
+            }
+        }
+        return n > 0 ? total / n : 0
+    }
+
+    var doc = ThumbDocument()
+    doc.width = 400; doc.height = 220
+    doc.backgroundHex = "000000"
+    var spec = TextSpec(text: "GLOW")
+    spec.sizeFraction = 0.3
+    spec.fillHex = "FFFFFF"
+    spec.strokeWidth = 0
+    spec.shadowEnabled = false
+    doc.layers = [ThumbLayer(kind: .text(spec), x: 0.5, y: 0.5, widthFraction: 0.9)]
+
+    check("effects are off on a fresh layer", !doc.layers[0].effects.isActive)
+    let plain = render(doc)
+
+    // A glow must put its colour in the gap BETWEEN the letters and the edge,
+    // where the layer itself paints nothing.
+    var glowing = doc
+    glowing.layers[0].effects.glowEnabled = true
+    glowing.layers[0].effects.glowHex = "00FF00"
+    glowing.layers[0].effects.glowRadius = 20
+    glowing.layers[0].effects.glowOpacity = 1
+    glowing.layers[0].effects.glowSpread = 0.4
+    check("turning one on is enough to count as active", glowing.layers[0].effects.isActive)
+    let glowed = render(glowing)
+    let halo = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.18)
+    let spilled = addedOutside(plain, glowed, 1)
+    check("a glow paints outside the layer that casts it",
+          spilled > 0.01,
+          String(format: "mean green %.4f where the layer painted nothing", spilled))
+    check("and it is the colour that was asked for, not the layer's",
+          spilled > addedOutside(plain, glowed, 0) + 0.01,
+          String(format: "green %.4f vs red %.4f, on white text",
+                 spilled, addedOutside(plain, glowed, 0)))
+
+    // Spread exists because blurring thin glyphs alone gives a faint mist.
+    var thin = glowing
+    thin.layers[0].effects.glowSpread = 0
+    let thinSpill = addedOutside(plain, render(thin), 1)
+    check("spread makes a glow denser than blur alone",
+          spilled > thinSpill + 0.002,
+          String(format: "%.4f with spread vs %.4f without", spilled, thinSpill))
+
+    // A colour overlay replaces the layer's own colour and nothing else.
+    var overlaid = doc
+    overlaid.layers[0].effects.colorOverlayEnabled = true
+    overlaid.layers[0].effects.colorOverlayHex = "FF0000"
+    let overlayRep = render(overlaid)
+    let letters = CGRect(x: 0.3, y: 0.4, width: 0.4, height: 0.2)
+    check("a colour overlay repaints the layer",
+          mean(overlayRep, letters, 0) > 0.3 && mean(overlayRep, letters, 2) < 0.2,
+          "red up, blue down, on what was white text")
+    check("and leaves the canvas around it alone",
+          abs(mean(overlayRep, halo, 0) - mean(plain, halo, 0)) < 0.02)
+
+    // The gradient has to run across the LETTERS. Scaled to the layer's
+    // measured box it never reached its second colour, because a line of text
+    // occupies only the middle of a box that includes its leading; scaled to
+    // the box's longest side it was worse still.
+    var ramped = doc
+    ramped.layers[0].effects.gradientOverlayEnabled = true
+    ramped.layers[0].effects.gradientFromHex = "FF0000"
+    ramped.layers[0].effects.gradientToHex = "0000FF"
+    ramped.layers[0].effects.gradientAngleDegrees = 90
+    let rampRep = render(ramped)
+    let top = CGRect(x: 0.3, y: 0.36, width: 0.4, height: 0.08)
+    let bottom = CGRect(x: 0.3, y: 0.54, width: 0.4, height: 0.08)
+    check("a gradient overlay reaches both of its colours across the glyphs",
+          mean(rampRep, top, 0) > mean(rampRep, top, 2) + 0.15
+              && mean(rampRep, bottom, 2) > mean(rampRep, bottom, 0) + 0.15,
+          String(format: "top r%.2f b%.2f, bottom r%.2f b%.2f",
+                 mean(rampRep, top, 0), mean(rampRep, top, 2),
+                 mean(rampRep, bottom, 0), mean(rampRep, bottom, 2)))
+    check("90 degrees puts the FROM colour at the top, like the text gradient does",
+          mean(rampRep, top, 0) > mean(rampRep, bottom, 0))
+
+    // An overlay repaints the layer's colour, and the layer's alpha includes
+    // its stroke. Painting straight over it turned a stroked headline into one
+    // orange blob: the black outline that keeps the letters apart was gone.
+    //
+    // Counted against a WHITE canvas so that "dark" can only mean the stroke.
+    // The first version of this check counted dark runs on a black canvas and
+    // happily passed the broken build, because the gaps between letters were
+    // background.
+    func strokePixels(_ doc: ThumbDocument) -> Int {
+        guard let rep = render(doc) else { return -1 }
+        var dark = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                if c.redComponent + c.greenComponent + c.blueComponent < 0.3 { dark += 1 }
+            }
+        }
+        return dark
+    }
+    var onWhite = doc
+    onWhite.backgroundHex = "FFFFFF"
+    if case .text(var st) = onWhite.layers[0].kind {
+        st.strokeWidth = 14
+        st.strokeHex = "000000"
+        onWhite.layers[0].kind = .text(st)
+    }
+    var onWhiteRamped = onWhite
+    onWhiteRamped.layers[0].effects.gradientOverlayEnabled = true
+    onWhiteRamped.layers[0].effects.gradientFromHex = "FF0000"
+    onWhiteRamped.layers[0].effects.gradientToHex = "0000FF"
+    let strokeBefore = strokePixels(onWhite)
+    let strokeAfter = strokePixels(onWhiteRamped)
+    check("an overlay recolours the layer without eating its stroke",
+          strokeBefore > 50 && Double(strokeAfter) > Double(strokeBefore) * 0.85,
+          "\(strokeBefore) dark pixels before, \(strokeAfter) after")
+
+    // An inner shadow darkens inside the edge and must not leak outside it.
+    var inner = doc
+    inner.layers[0].effects.innerShadowEnabled = true
+    inner.layers[0].effects.innerShadowRadius = 8
+    inner.layers[0].effects.innerShadowDistance = 6
+    inner.layers[0].effects.innerShadowOpacity = 1
+    let innerRep = render(inner)
+    check("an inner shadow darkens the layer",
+          mean(innerRep, letters, 0) < mean(plain, letters, 0) - 0.02,
+          String(format: "%.3f -> %.3f", mean(plain, letters, 0), mean(innerRep, letters, 0)))
+    check("and stays inside it",
+          abs(mean(innerRep, halo, 0) - mean(plain, halo, 0)) < 0.02,
+          "it is a shadow cast inward, not a second drop shadow")
+
+    // Effects survive a save. A glow that vanished on reopening would be worse
+    // than no glow at all.
+    if let data = try? JSONEncoder().encode(glowing),
+       let back = try? JSONDecoder().decode(ThumbDocument.self, from: data) {
+        check("effects round-trip through a saved design",
+              back.layers[0].effects == glowing.layers[0].effects)
+    } else {
+        check("effects round-trip through a saved design", false)
+    }
+    check("a design saved before effects existed still opens",
+          {
+              let old = #"{"width":1280,"height":720,"layers":[{"kind":{"text":{"_0":{"text":"HI"}}}}]}"#
+              guard let decoded = try? JSONDecoder().decode(
+                  ThumbDocument.self, from: Data(old.utf8)) else { return false }
+              return decoded.layers.count == 1 && !decoded.layers[0].effects.isActive
+          }())
+
+    // A layer with no effects must cost what it always cost.
+    check("a layer with no effects skips the whole pass",
+          {
+              guard let a = render(doc), let b = render(doc) else { return false }
+              return a.pixelsWide == b.pixelsWide
+                  && abs(mean(a, letters, 0) - mean(b, letters, 0)) < 0.001
+          }())
+
+    // Auto-layout has to know a glow paints outside the glyphs, or it will
+    // park a haloed headline with its halo under the duration badge.
+    var reach = doc
+    reach.layers[0].effects.glowEnabled = true
+    reach.layers[0].effects.glowRadius = 30
+    reach.layers[0].effects.glowSpread = 0.5
+    let bare = ThumbComposer.paintedBounds(doc.layers[0], in: doc,
+                                           provider: { _ in nil })
+    let haloed = ThumbComposer.paintedBounds(reach.layers[0], in: reach,
+                                             provider: { _ in nil })
+    check("auto-layout counts a glow as part of where the layer paints",
+          haloed.width > bare.width + 0.01 && haloed.height > bare.height + 0.01,
+          String(format: "%.3f -> %.3f wide", bare.width, haloed.width))
+    check("and an unglowing layer is unchanged by that",
+          abs(ThumbComposer.paintedBounds(doc.layers[0], in: doc, provider: { _ in nil }).width
+              - bare.width) < 0.0001)
+}
+
 section("Off the main thread")
 do {
     /// The harness's top-level code runs on the main thread but is not

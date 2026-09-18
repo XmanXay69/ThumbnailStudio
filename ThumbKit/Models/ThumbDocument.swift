@@ -113,6 +113,104 @@ struct ThumbDocument: Codable, Equatable {
     }
 }
 
+/// Effects that sit around a layer rather than inside it.
+///
+/// On `ThumbLayer` and not on the three specs, because a glow is a glow
+/// whether it is behind text, a cutout or a panel — and because the renderer
+/// applies all four the same way, from the layer's own alpha. The stroke and
+/// drop shadow already on `TextSpec` and `ImageSpec` are left where they are:
+/// they were there first, they work, and moving them would rewrite every
+/// saved design for no gain.
+///
+/// Sizes are in pixels at 720p and scale with the canvas, exactly as
+/// `strokeWidth` and `boxPadding` already do, so a design looks the same
+/// exported at 1280 or 3840.
+struct LayerEffects: Codable, Equatable {
+    /// The thumbnail effect. A bright halo behind the glyphs is what makes
+    /// text survive a busy game screenshot, and it was the one thing this
+    /// editor could not do that every channel it competes with does.
+    var glowEnabled: Bool = false
+    var glowHex: String = "00FF66"
+    var glowRadius: Double = 18
+    var glowOpacity: Double = 0.9
+    /// Fattens the silhouette before blurring, the way Photoshop's Spread
+    /// does. Without it a large radius only ever gives you a faint mist,
+    /// because blurring thin glyphs spreads their alpha to nothing.
+    var glowSpread: Double = 0.25
+
+    var innerShadowEnabled: Bool = false
+    var innerShadowHex: String = "000000"
+    var innerShadowRadius: Double = 10
+    var innerShadowOpacity: Double = 0.65
+    var innerShadowDistance: Double = 6
+    /// Degrees, 90 being from above — the light direction everyone assumes.
+    var innerShadowAngle: Double = 90
+
+    var colorOverlayEnabled: Bool = false
+    var colorOverlayHex: String = "FF3B30"
+    var colorOverlayOpacity: Double = 1
+
+    var gradientOverlayEnabled: Bool = false
+    var gradientFromHex: String = "FFD60A"
+    var gradientToHex: String = "FF375F"
+    var gradientAngleDegrees: Double = 90
+    var gradientOpacity: Double = 1
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        glowEnabled = value(.glowEnabled, false)
+        glowHex = value(.glowHex, "00FF66")
+        glowRadius = value(.glowRadius, 18)
+        glowOpacity = value(.glowOpacity, 0.9)
+        glowSpread = value(.glowSpread, 0.25)
+        innerShadowEnabled = value(.innerShadowEnabled, false)
+        innerShadowHex = value(.innerShadowHex, "000000")
+        innerShadowRadius = value(.innerShadowRadius, 10)
+        innerShadowOpacity = value(.innerShadowOpacity, 0.65)
+        innerShadowDistance = value(.innerShadowDistance, 6)
+        innerShadowAngle = value(.innerShadowAngle, 90)
+        colorOverlayEnabled = value(.colorOverlayEnabled, false)
+        colorOverlayHex = value(.colorOverlayHex, "FF3B30")
+        colorOverlayOpacity = value(.colorOverlayOpacity, 1)
+        gradientOverlayEnabled = value(.gradientOverlayEnabled, false)
+        gradientFromHex = value(.gradientFromHex, "FFD60A")
+        gradientToHex = value(.gradientToHex, "FF375F")
+        gradientAngleDegrees = value(.gradientAngleDegrees, 90)
+        gradientOpacity = value(.gradientOpacity, 1)
+    }
+
+    /// Whether any of this does anything. Checked before the renderer takes
+    /// the expensive path, so a design with no effects costs exactly what it
+    /// cost before they existed.
+    var isActive: Bool {
+        (glowEnabled && glowRadius > 0.01 && glowOpacity > 0.001)
+            || (innerShadowEnabled && innerShadowOpacity > 0.001)
+            || (colorOverlayEnabled && colorOverlayOpacity > 0.001)
+            || (gradientOverlayEnabled && gradientOpacity > 0.001)
+    }
+
+    /// Whether anything here repaints the layer's own colour. Those two are
+    /// the effects that have to respect a stroke; a glow and an inner shadow
+    /// do not.
+    var hasOverlay: Bool {
+        (colorOverlayEnabled && colorOverlayOpacity > 0.001)
+            || (gradientOverlayEnabled && gradientOpacity > 0.001)
+    }
+
+    /// How far outside its own bounds this layer now paints, in pixels at
+    /// 720p. The glow reaches past the glyphs, so anything measuring where a
+    /// layer lands — the badge test, the edge test — has to know about it.
+    var outerReach: Double {
+        guard glowEnabled, glowOpacity > 0.001 else { return 0 }
+        return glowRadius * (1 + glowSpread)
+    }
+}
+
 /// One layer. Geometry lives here; what it draws lives in `kind`.
 struct ThumbLayer: Codable, Identifiable, Equatable {
     enum Kind: Codable, Equatable {
@@ -138,12 +236,14 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
     var blendMode: String = "normal"
     var isVisible: Bool = true
     var isLocked: Bool = false
+    var effects = LayerEffects()
 
     init(id: UUID = UUID(), name: String = "", kind: Kind,
          x: Double = 0.5, y: Double = 0.5,
          widthFraction: Double = 0.5, heightFraction: Double = 0.3,
          rotationDegrees: Double = 0, opacity: Double = 1,
-         blendMode: String = "normal", isVisible: Bool = true, isLocked: Bool = false) {
+         blendMode: String = "normal", isVisible: Bool = true, isLocked: Bool = false,
+         effects: LayerEffects = LayerEffects()) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -156,6 +256,7 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
         self.blendMode = blendMode
         self.isVisible = isVisible
         self.isLocked = isLocked
+        self.effects = effects
     }
 
     init(from decoder: Decoder) throws {
@@ -175,6 +276,7 @@ struct ThumbLayer: Codable, Identifiable, Equatable {
         blendMode = value(.blendMode, "normal")
         isVisible = value(.isVisible, true)
         isLocked = value(.isLocked, false)
+        effects = value(.effects, LayerEffects())
     }
 
     var displayName: String {

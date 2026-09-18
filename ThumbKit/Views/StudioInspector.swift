@@ -13,6 +13,8 @@ extension ThumbnailStudioPane {
                         transformSection(layer)
                         StudioDivider()
                         kindSection(layer)
+                        StudioDivider()
+                        effectsSection(layer)
                     } else if selection.count > 1 {
                         multiSelectionSection
                     } else {
@@ -143,6 +145,129 @@ extension ThumbnailStudioPane {
                 }
             }
         }
+    }
+
+
+    // MARK: - Effects
+
+    /// Glow, inner shadow and the two overlays. One section for every layer
+    /// kind, because the renderer applies all four from the layer's own alpha
+    /// and does not care whether it is haloing a glyph, a cutout or a panel.
+    func effectsSection(_ layer: ThumbLayer) -> some View {
+        let id = layer.id
+        let fx = layer.effects
+        return StudioSection("Effects", symbol: "sparkles", isExpanded: expansion("effects")) {
+            Toggle("Glow", isOn: effectBinding(id, fx, \.glowEnabled, "Glow"))
+                .toggleStyle(.checkbox)
+                .font(Studio.Typo.body)
+                .help("A halo behind the layer — what makes text survive a busy screenshot")
+            if fx.glowEnabled {
+                StudioRow("Colour") {
+                    StudioColorWell(hex: effectBinding(id, fx, \.glowHex, "Glow Colour"))
+                }
+                StudioRow("Radius") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.glowRadius, "Glow Radius"),
+                                      in: 0...80) { String(format: "%.0f", $0) }
+                }
+                StudioRow("Spread") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.glowSpread, "Glow Spread"),
+                                      in: 0...1) { String(format: "%.0f%%", $0 * 100) }
+                }
+                StudioRow("Strength") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.glowOpacity, "Glow Strength"),
+                                      in: 0...1) { String(format: "%.0f%%", $0 * 100) }
+                }
+            }
+
+            StudioDivider()
+            Toggle("Inner shadow", isOn: effectBinding(id, fx, \.innerShadowEnabled, "Inner Shadow"))
+                .toggleStyle(.checkbox)
+                .font(Studio.Typo.body)
+            if fx.innerShadowEnabled {
+                StudioRow("Colour") {
+                    StudioColorWell(hex: effectBinding(id, fx, \.innerShadowHex, "Inner Shadow Colour"))
+                }
+                StudioRow("Radius") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.innerShadowRadius, "Inner Shadow Radius"),
+                                      in: 0...40) { String(format: "%.0f", $0) }
+                }
+                StudioRow("Distance") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.innerShadowDistance, "Inner Shadow Distance"),
+                                      in: 0...40) { String(format: "%.0f", $0) }
+                }
+                StudioRow("Angle") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.innerShadowAngle, "Inner Shadow Angle"),
+                                      in: 0...360) { String(format: "%.0f°", $0) }
+                }
+                StudioRow("Strength") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.innerShadowOpacity, "Inner Shadow Strength"),
+                                      in: 0...1) { String(format: "%.0f%%", $0 * 100) }
+                }
+                // A stroked headline is most thumbnail text, and the effect
+                // follows where the layer painted — which is the outside of
+                // the stroke. Saying so beats letting it read as broken.
+                if case .text(let spec) = layer.kind, spec.strokeWidth > 0.5 {
+                    Text("This layer has a stroke, so the shadow falls just inside the stroke rather than inside the letters.")
+                        .font(Studio.Typo.caption)
+                        .foregroundStyle(Studio.Palette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            StudioDivider()
+            Toggle("Colour overlay", isOn: effectBinding(id, fx, \.colorOverlayEnabled, "Colour Overlay"))
+                .toggleStyle(.checkbox)
+                .font(Studio.Typo.body)
+            if fx.colorOverlayEnabled {
+                StudioRow("Colour") {
+                    StudioColorWell(hex: effectBinding(id, fx, \.colorOverlayHex, "Overlay Colour"))
+                }
+                StudioRow("Strength") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.colorOverlayOpacity, "Overlay Strength"),
+                                      in: 0...1) { String(format: "%.0f%%", $0 * 100) }
+                }
+            }
+
+            StudioDivider()
+            Toggle("Gradient overlay", isOn: effectBinding(id, fx, \.gradientOverlayEnabled, "Gradient Overlay"))
+                .toggleStyle(.checkbox)
+                .font(Studio.Typo.body)
+            if fx.gradientOverlayEnabled {
+                StudioRow("From") {
+                    StudioColorWell(hex: effectBinding(id, fx, \.gradientFromHex, "Gradient From"))
+                }
+                StudioRow("To") {
+                    StudioColorWell(hex: effectBinding(id, fx, \.gradientToHex, "Gradient To"))
+                }
+                StudioRow("Angle") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.gradientAngleDegrees, "Gradient Angle"),
+                                      in: 0...360) { String(format: "%.0f°", $0) }
+                }
+                StudioRow("Strength") {
+                    StudioValueSlider(value: effectBinding(id, fx, \.gradientOpacity, "Gradient Strength"),
+                                      in: 0...1) { String(format: "%.0f%%", $0 * 100) }
+                }
+            }
+
+            if fx.isActive {
+                Button("Clear effects") {
+                    mutateLayer(id, "Clear Effects") { $0.effects = LayerEffects() }
+                }
+                .buttonStyle(.studio(.ghost, .small, fullWidth: true))
+            }
+        }
+    }
+
+    func effectBinding<T>(_ id: UUID, _ current: LayerEffects,
+                          _ path: WritableKeyPath<LayerEffects, T>,
+                          _ action: String) -> Binding<T> {
+        Binding(
+            get: {
+                doc.layers.first(where: { $0.id == id })?.effects[keyPath: path]
+                    ?? current[keyPath: path]
+            },
+            set: { value in mutateLayer(id, action) { $0.effects[keyPath: path] = value } }
+        )
     }
 
     // MARK: - Transform
