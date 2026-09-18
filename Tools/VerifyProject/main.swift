@@ -3315,6 +3315,36 @@ do {
           a.deletingLastPathComponent().lastPathComponent == "ThumbAssets"
               && !a.path.hasPrefix(NSTemporaryDirectory()))
 
+    // Adopting is what Tools/adopt-images.sh rests on: a design that names a
+    // file in ~/Downloads breaks when that folder is tidied, and stalls when
+    // iCloud evicts it.
+    let strayDir = NSTemporaryDirectory() + "/verify-stray"
+    try? FileManager.default.createDirectory(atPath: strayDir, withIntermediateDirectories: true)
+    let strayPath = strayDir + "/holiday snap.png"
+    if let png = NSImage(size: NSSize(width: 12, height: 8), flipped: false, drawingHandler: { rect in
+        NSColor.systemTeal.setFill(); rect.fill(); return true
+    }).tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?
+        .representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: strayPath))
+    }
+    let takenIn = ThumbLibrary.adopt(URL(fileURLWithPath: strayPath))
+    check("adopting a stray file puts it in the app's own storage",
+          takenIn?.hasPrefix(ThumbAssets.root.path) == true, takenIn ?? "nil")
+    check("adopting the same file twice costs one copy",
+          takenIn != nil && ThumbLibrary.adopt(URL(fileURLWithPath: strayPath)) == takenIn,
+          "content-addressed, so re-running the tool is free")
+    check("the adopted copy is the same picture",
+          {
+              guard let takenIn,
+                    let original = NSImage(contentsOfFile: strayPath),
+                    let copy = NSImage(contentsOfFile: takenIn) else { return false }
+              return original.size == copy.size
+          }())
+    check("the copy no longer carries the original's name",
+          takenIn.map { !$0.contains("holiday") } == true,
+          "which is why the tool moves the filename onto the layer before repointing it")
+    try? FileManager.default.removeItem(atPath: strayDir)
+
     check("the store can tell what it generated from what it was given",
           ThumbAssets.isGenerated("cutout-abc123.png")
               && ThumbAssets.isGenerated("grab-abc123-1000.png")
