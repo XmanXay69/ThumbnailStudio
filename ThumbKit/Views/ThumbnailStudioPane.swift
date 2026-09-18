@@ -116,6 +116,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             rerender()
             openLaunchSheet()
         }
+        // A file that missed its read deadline draws as a placeholder. When it
+        // finally arrives, draw again — otherwise the canvas keeps the
+        // placeholder until something else happens to change the document.
+        .onReceive(NotificationCenter.default.publisher(
+            for: AdjustedImageCache.imageDidArrive)) { _ in rerender() }
         .onChange(of: undoManager) { _, manager in store.timelineUndoManager = manager }
         .onChange(of: editor.selection) { _, _ in ThumbKeyRouter.shared.refresh() }
         .onChange(of: editor.textEditingRequest) { _, id in editingTextLayer = id }

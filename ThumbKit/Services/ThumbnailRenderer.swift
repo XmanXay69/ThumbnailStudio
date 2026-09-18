@@ -179,16 +179,35 @@ enum ThumbnailRenderer {
             let height = layer.heightFraction * size.height
             let rect = NSRect(x: center.x - width / 2, y: center.y - height / 2,
                               width: width, height: height)
-            NSColor(calibratedWhite: 0.25, alpha: 0.8).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12).fill()
+            // An empty slot and a file that would not open are different
+            // problems, and "double-click to set image" is a lie about the
+            // second one: the image IS set, it just could not be read.
+            let unset = spec.effectivePath.isEmpty
+            let message = unset
+                ? "double-click to set image"
+                : "can't read \(URL(fileURLWithPath: spec.effectivePath).lastPathComponent)"
+            if unset {
+                NSColor(calibratedWhite: 0.25, alpha: 0.8).setFill()
+            } else {
+                NSColor(calibratedRed: 0.42, green: 0.26, blue: 0.10, alpha: 0.85).setFill()
+            }
+            let slot = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
+            slot.fill()
+            if !unset {
+                NSColor(calibratedRed: 0.82, green: 0.60, blue: 0.13, alpha: 0.9).setStroke()
+                slot.lineWidth = max(1, size.height * 0.004)
+                slot.stroke()
+            }
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = .center
-            NSAttributedString(string: "double-click to set image", attributes: [
+            paragraph.lineBreakMode = .byTruncatingMiddle
+            NSAttributedString(string: message, attributes: [
                 .font: NSFont.systemFont(ofSize: size.height * 0.03, weight: .medium),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.7),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.85),
                 .paragraphStyle: paragraph,
-            ]).draw(in: NSRect(x: rect.minX, y: center.y - size.height * 0.02,
-                               width: rect.width, height: size.height * 0.05))
+            ]).draw(in: NSRect(x: rect.minX + rect.width * 0.04,
+                               y: center.y - size.height * 0.02,
+                               width: rect.width * 0.92, height: size.height * 0.05))
             return
         }
         // The crop is a source rect on the draw call — every provider gets
@@ -672,6 +691,9 @@ final class AdjustedImageCache: @unchecked Sendable {
     static let shared = AdjustedImageCache()
     private let cache = NSCache<NSString, NSImage>()
     private let originals = NSCache<NSString, NSImage>()
+    /// Paths with a read in flight, so a slow file is waited on once.
+    private let lock = NSLock()
+    private var reading: Set<String> = []
 
     func image(for spec: ImageSpec) -> NSImage? {
         let key = cacheKey(spec) as NSString
@@ -690,18 +712,80 @@ final class AdjustedImageCache: @unchecked Sendable {
         return image
     }
 
+    /// How long a render will wait for one file before drawing without it.
+    ///
+    /// There has to be a limit. `NSImage(contentsOfFile:)` opens the file, and
+    /// an open() on an iCloud-evicted path does not fail — it waits for the
+    /// download. One such file on this Mac took 2h41m to answer, and because
+    /// the whole canvas render sat inside that one call, the artboard stayed
+    /// black the entire time with nothing on it and no explanation.
+    ///
+    /// Generous for a local disk (a 4K JPEG decodes in tens of milliseconds)
+    /// and short enough that a stubborn file costs you one pause, not a
+    /// session.
+    static let readDeadline: TimeInterval = 1.5
+
+    /// Posted when a file that missed its deadline finally arrives, so
+    /// whoever drew without it can draw again.
+    static let imageDidArrive = Notification.Name("ThumbAdjustedImageDidArrive")
+
+    /// How a file becomes an image. Overridable so a check can make a read
+    /// take as long as it likes — the same trick `ThumbKeyContext` uses for
+    /// the key window. Production never reassigns it.
+    ///
+    /// It has to be injectable because the condition being defended against
+    /// cannot be staged: a named pipe looked like the obvious stand-in for a
+    /// file that will not open, and `NSImage(contentsOfFile:)` rejects one
+    /// without blocking, so the test passed against the bug it was written for.
+    nonisolated(unsafe) static var reader: (String) -> NSImage? = {
+        NSImage(contentsOfFile: $0)
+    }
+
     private func decoded(_ path: String) -> NSImage? {
         guard !path.isEmpty else { return nil }
         let key = path as NSString
         if let hit = originals.object(forKey: key) { return hit }
-        guard let image = NSImage(contentsOfFile: path) else { return nil }
-        originals.setObject(image, forKey: key)
-        return image
+
+        // Only one reader per path. Without this, every layer using a slow
+        // file — and every re-render while it is still slow — would start its
+        // own read and wait its own deadline.
+        lock.lock()
+        let alreadyReading = reading.contains(path)
+        if !alreadyReading { reading.insert(path) }
+        lock.unlock()
+        if alreadyReading { return nil }
+
+        let arrived = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let image = AdjustedImageCache.reader(path)
+            guard let self else { return }
+            if let image { self.originals.setObject(image, forKey: key) }
+            self.lock.lock()
+            self.reading.remove(path)
+            self.lock.unlock()
+            // `signal()` reports whether it woke anyone. Nobody waiting means
+            // the render gave up and drew a placeholder, so it needs telling.
+            let wokeTheWaiter = arrived.signal() != 0
+            if !wokeTheWaiter, image != nil {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: AdjustedImageCache.imageDidArrive, object: nil)
+                }
+            }
+        }
+
+        guard arrived.wait(timeout: .now() + Self.readDeadline) == .success else {
+            return nil
+        }
+        return originals.object(forKey: key)
     }
 
     func invalidate() {
         cache.removeAllObjects()
         originals.removeAllObjects()
+        // Reads in flight are deliberately left alone: they are already
+        // running, and forgetting them would let the next render start a
+        // second read of the same file.
     }
 
     /// Derived from the values, not hand-listed by name. The previous key

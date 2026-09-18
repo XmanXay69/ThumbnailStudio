@@ -3384,6 +3384,137 @@ do {
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
+section("A file that will not open")
+do {
+    // The condition being defended against cannot be staged with a real file:
+    // a named pipe was the obvious stand-in and NSImage rejects one without
+    // blocking, so that version of this test passed against the very bug it
+    // was written for. The read itself is injectable instead.
+    let slowPath = "/verify/never-opens.png"
+    let releaseReader = DispatchSemaphore(value: 0)
+    let readStarted = DispatchSemaphore(value: 0)
+    AdjustedImageCache.shared.invalidate()
+    AdjustedImageCache.reader = { path in
+        guard path == slowPath else { return NSImage(contentsOfFile: path) }
+        readStarted.signal()
+        // Held until the check lets it go — an evicted file that eventually
+        // downloads, compressed into a test.
+        _ = releaseReader.wait(timeout: .now() + 30)
+        return NSImage(size: NSSize(width: 40, height: 20), flipped: false) { rect in
+            NSColor.systemBlue.setFill(); rect.fill(); return true
+        }
+    }
+
+    var doc = ThumbDocument()
+    doc.width = 400; doc.height = 220
+    doc.backgroundHex = "000000"
+    var headline = TextSpec(text: "STILL HERE")
+    headline.sizeFraction = 0.25
+    headline.fillHex = "FFFFFF"
+    headline.strokeWidth = 0
+    headline.shadowEnabled = false
+    doc.layers = [
+        ThumbLayer(kind: .image(ImageSpec(path: slowPath)), x: 0.5, y: 0.25,
+                   widthFraction: 0.6, heightFraction: 0.3),
+        ThumbLayer(kind: .text(headline), x: 0.5, y: 0.7, widthFraction: 0.9),
+    ]
+    func draw() -> NSBitmapImageRep? {
+        ThumbnailRenderer.render(doc, showingPlaceholders: true) { spec in
+            AdjustedImageCache.shared.image(for: spec)
+        }?.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+    }
+    func lit(_ rep: NSBitmapImageRep?, _ box: CGRect) -> Double {
+        guard let rep else { return 0 }
+        var total = 0.0, n = 0.0
+        for y in stride(from: Int(box.minY * Double(rep.pixelsHigh)),
+                        to: Int(box.maxY * Double(rep.pixelsHigh)), by: 2) {
+            for x in stride(from: Int(box.minX * Double(rep.pixelsWide)),
+                            to: Int(box.maxX * Double(rep.pixelsWide)), by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                total += c.redComponent + c.greenComponent + c.blueComponent
+                n += 1
+            }
+        }
+        return n > 0 ? total / n : 0
+    }
+
+    let started = ProcessInfo.processInfo.systemUptime
+    let first = draw()
+    let elapsed = ProcessInfo.processInfo.systemUptime - started
+    check("a canvas still renders when one image will not open",
+          first != nil && elapsed < AdjustedImageCache.readDeadline + 1.0,
+          String(format: "returned in %.2fs against a %.1fs deadline",
+                 elapsed, AdjustedImageCache.readDeadline))
+    check("it waited for the file before giving up on it",
+          elapsed >= AdjustedImageCache.readDeadline - 0.2,
+          "a render that never waits would drop a merely slow disk")
+    check("the layers that CAN be drawn are drawn",
+          lit(first, CGRect(x: 0.2, y: 0.6, width: 0.6, height: 0.2)) > 0.2,
+          "the headline under the unreadable image must still be there")
+    /// Red minus blue over a box. The "set an image" slot is neutral grey and
+    /// the "can't read this" slot is amber, so this tells them apart —
+    /// brightness alone does not, and a version of this check that measured
+    /// brightness passed a build that always claimed the image was unset.
+    func warmth(_ rep: NSBitmapImageRep?, _ box: CGRect) -> Double {
+        guard let rep else { return 0 }
+        var total = 0.0, n = 0.0
+        for y in stride(from: Int(box.minY * Double(rep.pixelsHigh)),
+                        to: Int(box.maxY * Double(rep.pixelsHigh)), by: 2) {
+            for x in stride(from: Int(box.minX * Double(rep.pixelsWide)),
+                            to: Int(box.maxX * Double(rep.pixelsWide)), by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                total += c.redComponent - c.blueComponent
+                n += 1
+            }
+        }
+        return n > 0 ? total / n : 0
+    }
+    let slot = CGRect(x: 0.3, y: 0.15, width: 0.4, height: 0.2)
+    check("an unreadable image says so, rather than claiming it is unset",
+          lit(first, slot) > 0.1 && warmth(first, slot) > 0.08,
+          String(format: "warmth %.3f — a neutral slot would read near zero",
+                 warmth(first, slot)))
+    check("an image that was never set still gets the plain slot",
+          {
+              var empty = doc
+              empty.layers[0].kind = .image(ImageSpec(path: ""))
+              let rep = ThumbnailRenderer.render(empty, showingPlaceholders: true,
+                                                 provider: { _ in nil })?
+                  .tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+              return lit(rep, slot) > 0.1 && abs(warmth(rep, slot)) < 0.05
+          }(), "two different problems must not look the same")
+
+    // The second render must not queue behind the same file all over again.
+    let againStart = ProcessInfo.processInfo.systemUptime
+    _ = draw()
+    let again = ProcessInfo.processInfo.systemUptime - againStart
+    check("a second render does not wait for the same file again",
+          again < 0.5, String(format: "%.3fs", again))
+
+    // When it finally arrives it must be announced, or the canvas keeps the
+    // placeholder until something else happens to change the document.
+    var announced = false
+    let token = NotificationCenter.default.addObserver(
+        forName: AdjustedImageCache.imageDidArrive, object: nil, queue: .main) { _ in
+            announced = true
+        }
+    releaseReader.signal()
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline && !announced {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    NotificationCenter.default.removeObserver(token)
+    check("a file that arrives late announces itself", announced,
+          "otherwise the placeholder stays until you touch the design")
+    check("and the next render uses it",
+          lit(draw(), CGRect(x: 0.35, y: 0.18, width: 0.3, height: 0.12)) > 0.1,
+          "the image replaces the warning slot")
+
+    AdjustedImageCache.reader = { NSImage(contentsOfFile: $0) }
+    AdjustedImageCache.shared.invalidate()
+    _ = readStarted
+}
+
 section("Groups")
 do {
     func doc(_ n: Int) -> ThumbDocument {
