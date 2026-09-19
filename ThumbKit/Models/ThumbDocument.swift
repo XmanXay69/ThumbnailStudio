@@ -346,6 +346,13 @@ struct ImageSpec: Codable, Equatable {
     var cutoutFeather: Double = 1.0
     var cutoutContrast: Double = 0.35
     var flippedHorizontally: Bool = false
+    /// Honour `heightFraction` instead of the source's aspect.
+    ///
+    /// Set the moment an edge grip is dragged. Off by default and off for
+    /// every design ever saved, so an image still follows its own shape unless
+    /// you deliberately squash it — nobody wants a photo silently stretched
+    /// because a stored height happened to disagree with it.
+    var stretched: Bool = false
     /// Adjustments, all zero-centred.
     var brightness: Double = 0
     var contrast: Double = 0
@@ -407,6 +414,7 @@ struct ImageSpec: Codable, Equatable {
         cutoutFeather = value(.cutoutFeather, 1.0)
         cutoutContrast = value(.cutoutContrast, 0.35)
         flippedHorizontally = value(.flippedHorizontally, false)
+        stretched = value(.stretched, false)
         brightness = value(.brightness, 0)
         contrast = value(.contrast, 0)
         saturation = value(.saturation, 0)

@@ -135,12 +135,14 @@ extension ThumbnailStudioPane {
     private func layerHandles(width: CGFloat, height: CGFloat) -> some View {
         ForEach(doc.layers) { layer in
             let dragging = dragDraft?.ids.contains(layer.id) == true
-            let x = layer.x + (dragging ? dragDraft!.dx : 0)
-            let y = layer.y + (dragging ? dragDraft!.dy : 0)
-            let widthFraction = resizeDraft?.id == layer.id
-                ? resizeDraft!.width : layer.widthFraction
-            let heightFraction = layerHeightFraction(layer, width: resizeDraft?.id == layer.id
-                                                     ? resizeDraft!.width : nil)
+            let draft = transformDraft?.id == layer.id ? transformDraft?.result : nil
+            let x = (draft?.x ?? layer.x) + (dragging ? dragDraft!.dx : 0)
+            let y = (draft?.y ?? layer.y) + (dragging ? dragDraft!.dy : 0)
+            let widthFraction = draft?.widthFraction ?? layer.widthFraction
+            let heightFraction = draft?.heightFraction
+                ?? layerHeightFraction(layer, width: nil)
+            let spin = rotationDraft?.id == layer.id
+                ? rotationDraft!.degrees : layer.rotationDegrees
             let boxWidth = max(18, widthFraction * width)
             let boxHeight = max(14, heightFraction * height)
             let isSelected = selection.contains(layer.id)
@@ -153,12 +155,20 @@ extension ThumbnailStudioPane {
                     Rectangle()
                         .strokeBorder(Studio.Palette.accent, lineWidth: 1)
                     if !layer.isLocked {
-                        handle(at: CGPoint(x: boxWidth, y: boxHeight),
-                               layer: layer, canvasWidth: width)
+                        ForEach(grips(for: layer)) { grip in
+                            handle(grip, layer: layer,
+                                   boxWidth: boxWidth, boxHeight: boxHeight,
+                                   canvas: CGSize(width: width, height: height))
+                        }
+                        rotationHandle(layer, boxWidth: boxWidth, boxHeight: boxHeight,
+                                       canvas: CGSize(width: width, height: height))
                     }
                 }
             }
             .frame(width: boxWidth, height: boxHeight)
+            // Chrome turns with the layer. It did not before, so a rotated
+            // cutout had a selection box lying flat across it.
+            .rotationEffect(.degrees(spin))
             .position(x: x * width, y: y * height)
             .onTapGesture(count: 2) {
                 if case .image(let spec) = layer.kind, spec.path.isEmpty {
@@ -177,26 +187,127 @@ extension ThumbnailStudioPane {
         }
     }
 
-    private func handle(at point: CGPoint, layer: ThumbLayer, canvasWidth: CGFloat) -> some View {
-        Circle()
+    /// Which grips this layer offers.
+    ///
+    /// Text gets corners and side grips only. Its height comes from its font
+    /// and its line breaks, so a top or bottom grip would have nothing to
+    /// change — offering one that does nothing is worse than not offering it.
+    private func grips(for layer: ThumbLayer) -> [TransformHandle] {
+        if case .text = layer.kind {
+            return TransformHandle.allCases.filter { $0.heightSign == 0 || $0.isCorner }
+        }
+        return TransformHandle.allCases
+    }
+
+    private func handle(_ grip: TransformHandle, layer: ThumbLayer,
+                        boxWidth: CGFloat, boxHeight: CGFloat,
+                        canvas: CGSize) -> some View {
+        let unit = grip.unitPosition
+        return Rectangle()
             .fill(Studio.Palette.handleFill)
-            .overlay(Circle().strokeBorder(Studio.Palette.handleStroke, lineWidth: 1))
-            .frame(width: 9, height: 9)
-            .position(point)
+            .overlay(Rectangle().strokeBorder(Studio.Palette.handleStroke, lineWidth: 1))
+            .frame(width: grip.isCorner ? 8 : 7, height: grip.isCorner ? 8 : 7)
+            .position(x: unit.x * boxWidth, y: unit.y * boxHeight)
             .gesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    resizeDraft = (layer.id,
-                                   CanvasResize.proposedWidth(from: layer,
-                                                              translationX: value.translation.width,
-                                                              canvasWidth: canvasWidth))
+                    // A corner keeps the shape; holding Shift lets go of it.
+                    // That is the opposite of most editors and deliberate:
+                    // distorting a face is the rarer intent, so it is the one
+                    // that costs a modifier.
+                    let proportional = !NSEvent.modifierFlags.contains(.shift)
+                    let result = CanvasTransform.resize(
+                        layer, handle: grip, translation: value.translation,
+                        canvas: canvas,
+                        drawnHeight: layerHeightFraction(layer, width: nil),
+                        proportional: proportional)
+                    transformDraft = (layer.id, grip, result)
+                    lastDragWasProportional = proportional
                 }
                 .onEnded { _ in
-                    guard let draft = resizeDraft else { return }
-                    mutateLayer(layer.id, "Resize Layer") {
-                        CanvasResize.applying(width: draft.width, to: &$0)
-                    }
-                    resizeDraft = nil
+                    defer { transformDraft = nil }
+                    guard let draft = transformDraft else { return }
+                    commit(draft.result, handle: draft.handle,
+                           proportional: lastDragWasProportional, to: layer)
                 })
+    }
+
+    /// Writes a finished transform onto the layer.
+    ///
+    /// Each kind takes it differently, because "taller" means something
+    /// different to each: a shape stores a height, an image has to be told to
+    /// stop following its own aspect, and text has no height of its own at all
+    /// — it has a point size.
+    private func commit(_ result: CanvasTransform.Result,
+                        handle: TransformHandle, proportional: Bool,
+                        to layer: ThumbLayer) {
+        mutateLayer(layer.id, "Resize Layer") { target in
+            target.x = min(1, max(0, result.x))
+            target.y = min(1, max(0, result.y))
+            target.widthFraction = result.widthFraction
+            target.heightFraction = result.heightFraction
+            switch target.kind {
+            case .text(var spec):
+                // Corners scale the type; side grips only change the width the
+                // words wrap at, which is a real and separate thing to want.
+                if handle.isCorner {
+                    spec.sizeFraction = max(0.01, min(1, spec.sizeFraction * result.sizeScale))
+                    target.kind = .text(spec)
+                }
+            case .image(var spec):
+                // "Stop following the source's shape" is meant by a top or
+                // bottom grip, and by a corner dragged with Shift. A
+                // proportional corner drag keeps the aspect and must not set
+                // it — but a Shift-corner drag that did not would compute a
+                // new height and then have it ignored, so the drag would look
+                // broken in one axis.
+                if handle.heightSign != 0, handle.widthSign == 0 || !proportional {
+                    spec.stretched = true
+                }
+                target.kind = .image(spec)
+            case .shape:
+                break
+            }
+        }
+        AdjustedImageCache.shared.invalidate()
+        ImageAspectCache.shared.invalidate()
+    }
+
+    /// The grip above the box that spins the layer.
+    ///
+    /// Rotation was inspector-only, which meant angling a cutout was a trip to
+    /// a slider and back for every nudge.
+    private func rotationHandle(_ layer: ThumbLayer, boxWidth: CGFloat, boxHeight: CGFloat,
+                                canvas: CGSize) -> some View {
+        let centre = CGPoint(x: boxWidth / 2, y: boxHeight / 2)
+        let reach: CGFloat = 22
+        return ZStack {
+            Path { path in
+                path.move(to: CGPoint(x: centre.x, y: 0))
+                path.addLine(to: CGPoint(x: centre.x, y: -reach))
+            }
+            .stroke(Studio.Palette.handleStroke, lineWidth: 1)
+            Circle()
+                .fill(Studio.Palette.handleFill)
+                .overlay(Circle().strokeBorder(Studio.Palette.handleStroke, lineWidth: 1))
+                .frame(width: 9, height: 9)
+                .position(x: centre.x, y: -reach)
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let degrees = CanvasTransform.rotation(
+                            centre: centre, pointer: value.location,
+                            snapping: NSEvent.modifierFlags.contains(.shift))
+                        rotationDraft = (layer.id, degrees)
+                    }
+                    .onEnded { _ in
+                        defer { rotationDraft = nil }
+                        guard let draft = rotationDraft else { return }
+                        mutateLayer(layer.id, "Rotate Layer") {
+                            $0.rotationDegrees = draft.degrees
+                        }
+                    })
+        }
+        .frame(width: boxWidth, height: boxHeight)
+        .allowsHitTesting(true)
     }
 
     /// Dragging moves the whole selection, and snaps to the canvas centre and

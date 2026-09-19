@@ -3422,6 +3422,159 @@ do {
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
+section("Free transform")
+do {
+    let canvas = CGSize(width: 1000, height: 500)
+    var layer = ThumbLayer(kind: .shape(ShapeSpec()), x: 0.5, y: 0.5,
+                           widthFraction: 0.4, heightFraction: 0.2)
+
+    func box(_ r: CanvasTransform.Result) -> (l: Double, r: Double, t: Double, b: Double) {
+        (r.x - r.widthFraction / 2, r.x + r.widthFraction / 2,
+         r.y - r.heightFraction / 2, r.y + r.heightFraction / 2)
+    }
+    let start = (l: layer.x - 0.2, r: layer.x + 0.2, t: layer.y - 0.1, b: layer.y + 0.1)
+
+    check("every grip is accounted for", TransformHandle.allCases.count == 8)
+    check("corners are the four that move in both axes",
+          TransformHandle.allCases.filter(\.isCorner).count == 4)
+
+    // The whole point of edge grips: the far edge does not move.
+    let right = CanvasTransform.resize(layer, handle: .right,
+                                       translation: CGSize(width: 100, height: 0),
+                                       canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("dragging the right edge leaves the left edge alone",
+          abs(box(right).l - start.l) < 0.0001,
+          String(format: "left %.4f -> %.4f", start.l, box(right).l))
+    check("and widens by exactly the drag",
+          abs(right.widthFraction - (0.4 + 0.1)) < 0.0001,
+          "100pt of 1000 is 0.1 of the canvas")
+
+    let left = CanvasTransform.resize(layer, handle: .left,
+                                      translation: CGSize(width: 100, height: 0),
+                                      canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("dragging the left edge inward narrows it",
+          left.widthFraction < layer.widthFraction)
+    check("and leaves the right edge alone",
+          abs(box(left).r - start.r) < 0.0001,
+          String(format: "right %.4f -> %.4f", start.r, box(left).r))
+
+    let bottom = CanvasTransform.resize(layer, handle: .bottom,
+                                        translation: CGSize(width: 0, height: 50),
+                                        canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("dragging the bottom edge leaves the top alone",
+          abs(box(bottom).t - start.t) < 0.0001)
+    check("a vertical grip does not touch the width",
+          abs(bottom.widthFraction - layer.widthFraction) < 0.0001,
+          "or every height change would smear the layer sideways")
+
+    let topGrip = CanvasTransform.resize(layer, handle: .top,
+                                         translation: CGSize(width: 0, height: 50),
+                                         canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("dragging the top edge down leaves the bottom alone",
+          abs(box(topGrip).b - start.b) < 0.0001 && topGrip.heightFraction < 0.2)
+
+    // Corners keep the shape unless you ask otherwise.
+    let proportional = CanvasTransform.resize(layer, handle: .bottomRight,
+                                              translation: CGSize(width: 100, height: 4),
+                                              canvas: canvas, drawnHeight: 0.2,
+                                              proportional: true)
+    check("a corner keeps the layer's proportions",
+          abs(proportional.heightFraction / proportional.widthFraction - 0.2 / 0.4) < 0.01,
+          String(format: "%.3f vs %.3f",
+                 proportional.heightFraction / proportional.widthFraction, 0.5))
+    let free = CanvasTransform.resize(layer, handle: .bottomRight,
+                                      translation: CGSize(width: 100, height: 4),
+                                      canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("and lets go of them when asked",
+          abs(free.heightFraction / free.widthFraction - 0.2 / 0.4) > 0.05,
+          "non-uniform scale is the other half of a free transform")
+    check("a free corner drag still anchors the opposite corner",
+          abs(box(free).l - start.l) < 0.0001 && abs(box(free).t - start.t) < 0.0001)
+
+    // A layer dragged past its floor must stop, not keep sliding.
+    let crushed = CanvasTransform.resize(layer, handle: .right,
+                                         translation: CGSize(width: -9999, height: 0),
+                                         canvas: canvas, drawnHeight: 0.2, proportional: false)
+    check("a layer cannot be crushed below its minimum",
+          crushed.widthFraction >= CanvasTransform.minimumWidth - 0.0001)
+    check("and stops moving once it stops shrinking",
+          abs(box(crushed).l - start.l) < 0.0001,
+          "clamping the width without clamping the centre walks the layer off the canvas")
+
+    // Text scales by point size, since its height comes from its font.
+    check("a corner drag reports how much the type should grow",
+          abs(right.sizeScale - 0.5 / 0.4) < 0.0001,
+          String(format: "%.3f", right.sizeScale))
+
+    // Rotation. The grip sits above the layer, so straight up must read zero.
+    let centre = CGPoint(x: 100, y: 100)
+    check("the grip's resting position is zero degrees",
+          abs(CanvasTransform.rotation(centre: centre,
+                                       pointer: CGPoint(x: 100, y: 40),
+                                       snapping: false)) < 0.001)
+    check("dragging it clockwise increases the angle",
+          abs(CanvasTransform.rotation(centre: centre,
+                                       pointer: CGPoint(x: 160, y: 100),
+                                       snapping: false) - 90) < 0.001,
+          "to the right of centre is a quarter turn, matching the renderer")
+    check("and anticlockwise wraps rather than going negative",
+          abs(CanvasTransform.rotation(centre: centre,
+                                       pointer: CGPoint(x: 40, y: 100),
+                                       snapping: false) - 270) < 0.001)
+    check("snapping lands on a round number",
+          CanvasTransform.rotation(centre: centre,
+                                   pointer: CGPoint(x: 160, y: 96),
+                                   snapping: true) == 90,
+          "a 44.6 you have to fix in the inspector is not a snap")
+    check("a pointer on top of the centre does not spin the layer",
+          CanvasTransform.rotation(centre: centre, pointer: centre, snapping: false) == 0)
+
+    // An image follows its source's shape until a grip says otherwise, and a
+    // design saved before this existed must not start stretching.
+    check("an image follows its own shape by default",
+          {
+              var spec = ImageSpec(path: "/x.png")
+              spec.stretched = false
+              let square = NSImage(size: NSSize(width: 100, height: 50), flipped: false) { rect in
+                  NSColor.white.setFill(); rect.fill(); return true
+              }
+              let imageLayer = ThumbLayer(kind: .image(spec), x: 0.5, y: 0.5,
+                                          widthFraction: 0.4, heightFraction: 0.9)
+              let drawn = ThumbnailRenderer.drawnHeightFraction(
+                  imageLayer, in: CGSize(width: 1000, height: 500), provider: { _ in square })
+              // 0.4 of 1000 is 400 wide; at 2:1 that is 200 tall, 0.4 of 500.
+              return abs(drawn - 0.4) < 0.01
+          }(), "its stored height of 0.9 is ignored until it is stretched")
+    check("a stretched image honours the height it was given",
+          {
+              var spec = ImageSpec(path: "/x.png")
+              spec.stretched = true
+              let square = NSImage(size: NSSize(width: 100, height: 50), flipped: false) { rect in
+                  NSColor.white.setFill(); rect.fill(); return true
+              }
+              let imageLayer = ThumbLayer(kind: .image(spec), x: 0.5, y: 0.5,
+                                          widthFraction: 0.4, heightFraction: 0.9)
+              return abs(ThumbnailRenderer.drawnHeightFraction(
+                  imageLayer, in: CGSize(width: 1000, height: 500),
+                  provider: { _ in square }) - 0.9) < 0.0001
+          }())
+    check("a design saved before stretching opens unstretched",
+          {
+              let old = #"{"width":1280,"height":720,"layers":[{"kind":{"image":{"_0":{"path":"/a.png"}}}}]}"#
+              guard let decoded = try? JSONDecoder().decode(
+                  ThumbDocument.self, from: Data(old.utf8)),
+                    case .image(let spec) = decoded.layers[0].kind else { return false }
+              return !spec.stretched
+          }(), "nobody wants a photo silently squashed by a stored height")
+
+    // Where the grips actually sit, which the view positions them from.
+    check("grips sit on the corners and edge midpoints",
+          TransformHandle.topLeft.unitPosition == CGPoint(x: 0, y: 0)
+              && TransformHandle.bottomRight.unitPosition == CGPoint(x: 1, y: 1)
+              && TransformHandle.top.unitPosition == CGPoint(x: 0.5, y: 0)
+              && TransformHandle.left.unitPosition == CGPoint(x: 0, y: 0.5))
+}
+
 section("Multiple outlines on text")
 do {
     func render(_ d: ThumbDocument) -> NSBitmapImageRep? {

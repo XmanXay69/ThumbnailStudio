@@ -239,26 +239,35 @@ func run() async {
     }) ?? store.thumbDoc.layers[0]
     target.widthFraction = 0.40
     target.heightFraction = 0.20
-    let grown = CanvasResize.proposedWidth(from: target, translationX: 128,
-                                           canvasWidth: canvas.width)
-    check("dragging the handle 128pt widens by 128 canvas px",
+    // Driven through the grip the canvas actually uses. This used to drive
+    // CanvasResize, which the canvas stopped calling when the eight grips
+    // landed — a driven check exercising a path the app no longer takes is
+    // worse than no check, because it reads as coverage.
+    let pulled = CanvasTransform.resize(target, handle: .bottomRight,
+                                        translation: CGSize(width: 128, height: 0),
+                                        canvas: canvas, drawnHeight: target.heightFraction,
+                                        proportional: true)
+    let grown = pulled.widthFraction
+    check("dragging the corner 128pt widens by 128 canvas px",
           abs((grown - target.widthFraction) * canvas.width - 128) < 0.001,
           String(format: "%.3f -> %.3f", target.widthFraction, grown))
-
-    var shaped = target
-    CanvasResize.applying(width: grown, to: &shaped)
-    check("resizing keeps the layer's proportions",
-          abs(shaped.heightFraction / shaped.widthFraction
-              - target.heightFraction / target.widthFraction) < 0.0001,
+    check("a corner keeps the layer's proportions",
+          abs(pulled.heightFraction / pulled.widthFraction
+              - target.heightFraction / target.widthFraction) < 0.01,
           String(format: "%.4f vs %.4f",
-                 shaped.heightFraction / shaped.widthFraction,
+                 pulled.heightFraction / pulled.widthFraction,
                  target.heightFraction / target.widthFraction))
+    check("and leaves the opposite corner where it was",
+          abs((pulled.x - pulled.widthFraction / 2)
+              - (target.x - target.widthFraction / 2)) < 0.0001)
 
-    let shrunk = CanvasResize.proposedWidth(from: target, translationX: -9999,
-                                            canvasWidth: canvas.width)
-    check("a layer cannot be shrunk until its handle is unreachable",
-          shrunk >= CanvasResize.minimumWidthFraction,
-          String(format: "floor %.3f", shrunk))
+    let shrunk = CanvasTransform.resize(target, handle: .right,
+                                        translation: CGSize(width: -9999, height: 0),
+                                        canvas: canvas, drawnHeight: target.heightFraction,
+                                        proportional: false)
+    check("a layer cannot be shrunk until its grip is unreachable",
+          shrunk.widthFraction >= CanvasTransform.minimumWidth,
+          String(format: "floor %.3f", shrunk.widthFraction))
 
     // The commit path, and that the selection box follows the drawn size.
     model.selection = [target.id]
@@ -273,7 +282,14 @@ func run() async {
         layer(resizedID), in: canvas, provider: ThumbnailRenderer.fileProvider)
     var committed = store.thumbDoc
     if let index = committed.layers.firstIndex(where: { $0.id == resizedID }) {
-        CanvasResize.applying(width: grown, to: &committed.layers[index])
+        let live = CanvasTransform.resize(
+            committed.layers[index], handle: .bottomRight,
+            translation: CGSize(width: 128, height: 0), canvas: canvas,
+            drawnHeight: committed.layers[index].heightFraction, proportional: true)
+        committed.layers[index].x = live.x
+        committed.layers[index].y = live.y
+        committed.layers[index].widthFraction = live.widthFraction
+        committed.layers[index].heightFraction = live.heightFraction
     }
     userAction { store.applyThumbDoc(committed, action: "Resize Layer") }
     check("the resize committed", abs(layer(resizedID).widthFraction - grown) < 0.0001)

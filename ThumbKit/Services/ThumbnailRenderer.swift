@@ -100,6 +100,10 @@ enum ThumbnailRenderer {
                               options: [.usesLineFragmentOrigin])
             return Double((ceil(measured.height) + 4) / size.height)
         case .image(let spec):
+            // A stretched image is exactly as tall as it says, with no file to
+            // consult — which also means the selection box is right before the
+            // picture has finished loading.
+            if spec.stretched { return layer.heightFraction }
             guard let image = provider(spec), image.size.width > 0 else {
                 return layer.heightFraction
             }
@@ -224,7 +228,10 @@ enum ThumbnailRenderer {
         let sourceW = sourceRect == .zero ? image.size.width : sourceRect.width
         let sourceH = sourceRect == .zero ? image.size.height : sourceRect.height
         let width = layer.widthFraction * size.width
-        let height = width * sourceH / max(1, sourceW)
+        // Its own shape, unless an edge grip has been dragged.
+        let height = spec.stretched
+            ? layer.heightFraction * size.height
+            : width * sourceH / max(1, sourceW)
         let rect = NSRect(x: center.x - width / 2, y: center.y - height / 2,
                           width: width, height: height)
 

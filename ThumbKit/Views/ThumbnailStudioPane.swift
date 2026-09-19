@@ -39,7 +39,14 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     @State var showLayouts = false
     @State var showPreview = false
     @State var dragDraft: (ids: Set<UUID>, dx: Double, dy: Double)?
-    @State var resizeDraft: (id: UUID, width: Double)?
+    /// The transform being dragged right now, so the selection box and the
+    /// layer move together instead of the box lagging a frame behind.
+    @State var transformDraft: (id: UUID, handle: TransformHandle,
+                                result: CanvasTransform.Result)?
+    @State var rotationDraft: (id: UUID, degrees: Double)?
+    /// Whether the drag in progress was holding the aspect. Read at the end of
+    /// the gesture, when the modifier keys are no longer worth trusting.
+    @State var lastDragWasProportional = true
     @State var isDropTargeted = false
     /// Which render is current. A canvas render now happens off the main
     /// thread, so a slow one of an OLD document can finish after a fast one of
