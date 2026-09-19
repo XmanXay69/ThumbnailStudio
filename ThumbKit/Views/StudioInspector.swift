@@ -521,6 +521,39 @@ extension ThumbnailStudioPane {
                     StudioValueSlider(value: textBinding(id, spec, \.strokeWidth, "Stroke Width"),
                                       in: 0...30) { String(format: "%.0f", $0) }
                 }
+                // Outlines outside that one, listed outermost last because
+                // that is the order they read on the canvas from the letters
+                // outward.
+                ForEach(spec.extraStrokes) { extra in
+                    StudioRow("Outline 2") {
+                        HStack(spacing: Studio.Space.xs) {
+                            StudioColorWell(hex: strokeBinding(id, extra.id, \.hex,
+                                                               "Outer Stroke Colour"),
+                                            showsHex: false)
+                            StudioValueSlider(value: strokeBinding(id, extra.id, \.width,
+                                                                   "Outer Stroke Width"),
+                                              in: 0...60) { String(format: "%.0f", $0) }
+                            StudioIconButton("minus", help: "Remove this outline",
+                                             size: .small) {
+                                mutateText(id, "Remove Outline") {
+                                    $0.extraStrokes.removeAll { $0.id == extra.id }
+                                }
+                            }
+                        }
+                    }
+                }
+                Button("Add outline") {
+                    mutateText(id, "Add Outline") { target in
+                        // Wider than everything already there, or it lands
+                        // underneath and looks like the button did nothing.
+                        let widest = target.allStrokes.first?.width ?? target.strokeWidth
+                        target.extraStrokes.append(
+                            TextStroke(width: min(60, widest + 14),
+                                       hex: target.strokeHex == "FFFFFF" ? "000000" : "FFFFFF"))
+                    }
+                }
+                .buttonStyle(.studio(.ghost, .small, fullWidth: true))
+                .disabled(spec.extraStrokes.count >= 3)
                 Toggle("Drop shadow", isOn: textBinding(id, spec, \.shadowEnabled, "Text Shadow"))
                     .toggleStyle(.checkbox)
                     .font(Studio.Typo.body)
@@ -693,6 +726,30 @@ extension ThumbnailStudioPane {
                 return current[keyPath: path]
             },
             set: { value in mutateText(id, action) { $0[keyPath: path] = value } }
+        )
+    }
+
+    /// One field of one extra outline. Addressed by the stroke's id rather
+    /// than its index: the list is sorted for drawing and can be edited while
+    /// a slider is mid-drag, and an index would then point at a different
+    /// outline than the one under the pointer.
+    func strokeBinding<T>(_ id: UUID, _ strokeID: UUID,
+                          _ path: WritableKeyPath<TextStroke, T>,
+                          _ action: String) -> Binding<T> where T: Equatable {
+        Binding(
+            get: {
+                guard case .text(let spec)? = doc.layers.first(where: { $0.id == id })?.kind,
+                      let stroke = spec.extraStrokes.first(where: { $0.id == strokeID })
+                else { return TextStroke()[keyPath: path] }
+                return stroke[keyPath: path]
+            },
+            set: { value in
+                mutateText(id, action) { spec in
+                    guard let index = spec.extraStrokes.firstIndex(where: { $0.id == strokeID })
+                    else { return }
+                    spec.extraStrokes[index][keyPath: path] = value
+                }
+            }
         )
     }
 

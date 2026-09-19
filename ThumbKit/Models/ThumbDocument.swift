@@ -457,6 +457,37 @@ struct ImageSpec: Codable, Equatable {
     var effectivePath: String { useCutout ? (cutoutPath ?? path) : path }
 }
 
+/// One outline around the letters.
+///
+/// Width is measured from the glyph edge, not added to the stroke inside it,
+/// so an outer stroke has to be wider than the one it surrounds to show at
+/// all. That falls out of how the renderer draws them — each is a fattened
+/// copy of the glyphs and the narrower ones land on top — and pretending
+/// otherwise in the model would mean the number in the inspector and the
+/// pixels on the canvas disagreed.
+struct TextStroke: Codable, Equatable, Identifiable {
+    var id: UUID = UUID()
+    /// Pixels at 720p, scaling with the canvas like every other size here.
+    var width: Double = 24
+    var hex: String = "FFFFFF"
+
+    init(id: UUID = UUID(), width: Double = 24, hex: String = "FFFFFF") {
+        self.id = id
+        self.width = width
+        self.hex = hex
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id = value(.id, UUID())
+        width = value(.width, 24)
+        hex = value(.hex, "FFFFFF")
+    }
+}
+
 /// Text — the big thumbnail kind: heavy face, hard stroke, optional gradient.
 struct TextSpec: Codable, Equatable {
     var text: String = "TEXT"
@@ -485,6 +516,13 @@ struct TextSpec: Codable, Equatable {
     var strokeHex: String = "000000"
     /// Stroke width in pixels at 720p; scales with the canvas.
     var strokeWidth: Double = 10
+    /// Outlines drawn OUTSIDE the one above — the black-then-white double
+    /// outline that most of this genre uses.
+    ///
+    /// Kept separate from `strokeWidth` rather than folding both into one
+    /// list, because `strokeWidth` is read in a dozen places and every saved
+    /// design already has one. This adds to it instead of replacing it.
+    var extraStrokes: [TextStroke] = []
     var shadowEnabled: Bool = true
     var shadowBlur: Double = 10
     var shadowOffset: Double = 5
@@ -499,6 +537,22 @@ struct TextSpec: Codable, Equatable {
     /// What actually gets drawn. Uppercasing lives here so the renderer, the
     /// measurement and the hit box can never disagree about it.
     var renderedText: String { uppercase ? text.uppercased() : text }
+
+    /// Every outline, widest first — which is also the order they must be
+    /// drawn in, since each is a fattened copy of the glyphs and the narrower
+    /// ones have to land on top to leave a ring of the wider one showing.
+    ///
+    /// Sorted here rather than trusted from the array, so a stroke someone
+    /// made narrower in the inspector cannot silently vanish underneath the
+    /// one it used to surround.
+    var allStrokes: [TextStroke] {
+        ([TextStroke(width: strokeWidth, hex: strokeHex)] + extraStrokes)
+            .filter { $0.width > 0.1 }
+            .sorted { $0.width > $1.width }
+    }
+
+    /// How far the outlines reach past the letters, in pixels at 720p.
+    var widestStroke: Double { allStrokes.first?.width ?? 0 }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -518,6 +572,7 @@ struct TextSpec: Codable, Equatable {
         imageFillPath = try? container.decodeIfPresent(String.self, forKey: .imageFillPath)
         strokeHex = value(.strokeHex, "000000")
         strokeWidth = value(.strokeWidth, 10)
+        extraStrokes = value(.extraStrokes, [])
         shadowEnabled = value(.shadowEnabled, true)
         shadowBlur = value(.shadowBlur, 10)
         shadowOffset = value(.shadowOffset, 5)

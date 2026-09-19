@@ -11,6 +11,14 @@ let shortsURL = URL(fileURLWithPath: projectDir + "/shorts.json")
 let projectURL = URL(fileURLWithPath: projectDir + "/project.json")
 
 var failures = 0
+extension ThumbLayer.Kind {
+    /// Reaching into a `.text` case is three lines every time in a check file.
+    var textSpec: TextSpec? {
+        if case .text(let spec) = self { return spec }
+        return nil
+    }
+}
+
 func check(_ label: String, _ condition: Bool, _ detail: String = "") {
     print((condition ? "  PASS  " : "  FAIL  ") + label + (detail.isEmpty ? "" : " — \(detail)"))
     if !condition { failures += 1 }
@@ -3412,6 +3420,154 @@ do {
         check("once the design is gone, so is its cutout", false)
     }
     try? FileManager.default.removeItem(atPath: sourcePath)
+}
+
+section("Multiple outlines on text")
+do {
+    func render(_ d: ThumbDocument) -> NSBitmapImageRep? {
+        ThumbnailRenderer.render(d, showingPlaceholders: false, provider: { _ in nil })?
+            .tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+    }
+    /// How many sampled pixels are close to a colour. Counting pixels rather
+    /// than averaging, because an outline is a thin ring and an average over
+    /// the whole frame drowns it in background.
+    func pixels(_ rep: NSBitmapImageRep?, near target: (Double, Double, Double)) -> Int {
+        guard let rep else { return 0 }
+        var found = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                if abs(c.redComponent - target.0) < 0.12,
+                   abs(c.greenComponent - target.1) < 0.12,
+                   abs(c.blueComponent - target.2) < 0.12 { found += 1 }
+            }
+        }
+        return found
+    }
+    let white = (1.0, 1.0, 1.0), red = (0.90, 0.13, 0.17), black = (0.0, 0.0, 0.0)
+
+    var doc = ThumbDocument()
+    doc.width = 640; doc.height = 300
+    doc.backgroundHex = "1B3A2A"
+    var spec = TextSpec(text: "DOOMSDAY")
+    spec.sizeFraction = 0.26
+    spec.fillHex = "FFD60A"
+    spec.strokeWidth = 10
+    spec.strokeHex = "000000"
+    spec.shadowEnabled = false
+    doc.layers = [ThumbLayer(kind: .text(spec), x: 0.5, y: 0.5, widthFraction: 0.92)]
+
+    check("a layer starts with one outline", doc.layers[0].kind.textSpec?.allStrokes.count == 1)
+    let single = render(doc)
+    check("and no second colour is on the canvas",
+          pixels(single, near: white) < 20 && pixels(single, near: red) < 20)
+
+    var doubled = doc
+    if case .text(var t) = doubled.layers[0].kind {
+        t.extraStrokes = [TextStroke(width: 26, hex: "FFFFFF")]
+        doubled.layers[0].kind = .text(t)
+    }
+    let twice = render(doubled)
+    check("a second outline puts its colour on the canvas",
+          pixels(twice, near: white) > 200,
+          "\(pixels(twice, near: white)) white pixels, up from \(pixels(single, near: white))")
+    check("without swallowing the first",
+          pixels(twice, near: black) > 100,
+          "\(pixels(twice, near: black)) black pixels — the inner outline survives")
+
+    var tripled = doubled
+    if case .text(var t) = tripled.layers[0].kind {
+        t.extraStrokes.append(TextStroke(width: 42, hex: "E5202B"))
+        tripled.layers[0].kind = .text(t)
+    }
+    let thrice = render(tripled)
+    check("three outlines show all three colours",
+          pixels(thrice, near: black) > 80 && pixels(thrice, near: white) > 80
+              && pixels(thrice, near: red) > 80,
+          "black \(pixels(thrice, near: black)), white \(pixels(thrice, near: white)), red \(pixels(thrice, near: red))")
+
+    // The array order must not decide the drawing order, or an outline made
+    // narrower in the inspector silently disappears under the one it used to
+    // surround.
+    var scrambled = doc
+    if case .text(var t) = scrambled.layers[0].kind {
+        t.extraStrokes = [TextStroke(width: 42, hex: "E5202B"),
+                          TextStroke(width: 26, hex: "FFFFFF")]
+        scrambled.layers[0].kind = .text(t)
+    }
+    let mixed = render(scrambled)
+    check("the order they are stored in does not change the picture",
+          abs(pixels(mixed, near: white) - pixels(thrice, near: white)) < 30
+              && abs(pixels(mixed, near: red) - pixels(thrice, near: red)) < 30,
+          "widest is drawn first whatever the array says")
+    check("allStrokes hands them back widest first",
+          scrambled.layers[0].kind.textSpec?.allStrokes.map(\.width) == [42, 26, 10])
+    check("an outline of zero width is not drawn at all",
+          {
+              var none = doc
+              if case .text(var t) = none.layers[0].kind {
+                  t.extraStrokes = [TextStroke(width: 0, hex: "FFFFFF")]
+                  none.layers[0].kind = .text(t)
+              }
+              return none.layers[0].kind.textSpec?.allStrokes.count == 1
+          }())
+
+    // Everything that reasons about how far text reaches has to use the widest.
+    check("auto-layout measures the outermost outline, not the innermost",
+          {
+              let inner = ThumbComposer.paintedBounds(doc.layers[0], in: doc,
+                                                      provider: { _ in nil })
+              let outer = ThumbComposer.paintedBounds(tripled.layers[0], in: tripled,
+                                                      provider: { _ in nil })
+              return outer.width > inner.width + 0.02
+          }(), "or a haloed headline gets parked with its outline under the badge")
+
+    // Sharp corners on a heavy face throw spikes at wide stroke widths unless
+    // the join is rounded. Measured as how far the outermost colour reaches
+    // ABOVE the letters: with round joins the topmost red pixel sits at 0.35
+    // of the frame, with miter joins at 0.20. The first version of this check
+    // looked at the top sixth — 0.167 — and the spikes stopped just short of
+    // it, so a build with miter joins passed.
+    check("a wide outline does not throw spikes off the corners",
+          {
+              guard let rep = thrice else { return false }
+              var topmost = rep.pixelsHigh
+              for y in 0..<rep.pixelsHigh {
+                  for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                      guard let c = rep.colorAt(x: x, y: y) else { continue }
+                      if abs(c.redComponent - red.0) < 0.15,
+                         abs(c.greenComponent - red.1) < 0.15 {
+                          topmost = min(topmost, y)
+                      }
+                  }
+                  if topmost < rep.pixelsHigh { break }
+              }
+              return Double(topmost) / Double(rep.pixelsHigh) > 0.30
+          }(), "miter joins put long spikes above the caps at 42px")
+
+    check("outlines survive a save",
+          {
+              guard let data = try? JSONEncoder().encode(tripled),
+                    let back = try? JSONDecoder().decode(ThumbDocument.self, from: data)
+              else { return false }
+              return back.layers[0].kind.textSpec?.extraStrokes.count == 2
+          }())
+    check("a design saved before outlines existed still opens with one",
+          {
+              let old = #"{"width":1280,"height":720,"layers":[{"kind":{"text":{"_0":{"text":"HI","strokeWidth":12}}}}]}"#
+              guard let decoded = try? JSONDecoder().decode(
+                  ThumbDocument.self, from: Data(old.utf8)) else { return false }
+              return decoded.layers[0].kind.textSpec?.extraStrokes.isEmpty == true
+                  && decoded.layers[0].kind.textSpec?.allStrokes.count == 1
+          }())
+
+    // A colour overlay is masked to a strokeless copy of the layer. If that
+    // copy kept its outer outlines the overlay would repaint them.
+    check("an overlay leaves every outline alone, not just the first",
+          {
+              let bare = ThumbnailRenderer.strokeless(tripled.layers[0])
+              return bare.kind.textSpec?.allStrokes.isEmpty == true
+          }())
 }
 
 section("A file that will not open")

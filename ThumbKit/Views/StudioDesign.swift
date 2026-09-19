@@ -833,12 +833,15 @@ public struct StudioStatusBar<Content: View>: View {
 public struct StudioColorWell: View {
     @Binding private var hex: String
     private let label: String
+    /// Hides the hex readout for rows that cannot spare the width.
+    private let showsHex: Bool
 
     @State private var hovering = false
 
-    public init(_ label: String = "", hex: Binding<String>) {
+    public init(_ label: String = "", hex: Binding<String>, showsHex: Bool = true) {
         self.label = label
         self._hex = hex
+        self.showsHex = showsHex
     }
 
     public var body: some View {
@@ -854,10 +857,18 @@ public struct StudioColorWell: View {
                     .font(Studio.Typo.caption)
                     .foregroundStyle(Studio.Palette.textTertiary)
             }
-            Text(hex.uppercased())
-                .font(Studio.Typo.numeric)
-                .foregroundStyle(hovering ? Studio.Palette.textPrimary : Studio.Palette.textTertiary)
-                .onHover { hovering = $0 }
+            if showsHex {
+                Text(hex.uppercased())
+                    .font(Studio.Typo.numeric)
+                    // Six characters, one line, always. Without this it wrapped
+                    // to "FFFF / FF" in any row tight enough to squeeze it, and
+                    // the second line landed on top of whatever came next.
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(hovering ? Studio.Palette.textPrimary
+                                              : Studio.Palette.textTertiary)
+                    .onHover { hovering = $0 }
+            }
         }
     }
 }

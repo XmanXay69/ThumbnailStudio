@@ -223,7 +223,9 @@ enum ThumbComposer {
         if case .text(let spec) = layer.kind {
             // Both are authored in pixels at 720 high and scale with the canvas,
             // exactly as the renderer scales them.
-            pixels += spec.strokeWidth * canvas.height / 720
+            // The WIDEST outline, not the innermost: a headline with a second
+            // stroke outside the first reaches further than `strokeWidth` says.
+            pixels += spec.widestStroke * canvas.height / 720
                 + (spec.boxEnabled ? spec.boxPadding * canvas.height / 720 : 0)
         }
         // A glow paints well outside the glyphs, and it is authored at 720p

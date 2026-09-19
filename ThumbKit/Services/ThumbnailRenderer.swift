@@ -366,7 +366,8 @@ enum ThumbnailRenderer {
     // MARK: - Text
 
     static func textAttributes(_ spec: TextSpec, canvasHeight: CGFloat,
-                               strokePass: Bool) -> [NSAttributedString.Key: Any] {
+                               strokePass: Bool,
+                               stroke: TextStroke? = nil) -> [NSAttributedString.Key: Any] {
         let fontSize = spec.sizeFraction * canvasHeight
         let font = ThumbFonts.font(for: spec, size: fontSize)
         let paragraph = NSMutableParagraphStyle()
@@ -379,10 +380,13 @@ enum ThumbnailRenderer {
             .kern: spec.letterSpacing,
         ]
         if strokePass {
-            let scaled = spec.strokeWidth * canvasHeight / 720
-            attributes[.strokeColor] = HexColor.color(hex: spec.strokeHex)
+            // Defaults to the layer's own stroke so every existing caller —
+            // and every measurement — behaves exactly as before.
+            let drawn = stroke ?? TextStroke(width: spec.strokeWidth, hex: spec.strokeHex)
+            let scaled = drawn.width * canvasHeight / 720
+            attributes[.strokeColor] = HexColor.color(hex: drawn.hex)
             attributes[.strokeWidth] = scaled / max(1, fontSize) * 100
-            attributes[.foregroundColor] = HexColor.color(hex: spec.strokeHex)
+            attributes[.foregroundColor] = HexColor.color(hex: drawn.hex)
         } else {
             attributes[.foregroundColor] = HexColor.color(hex: spec.fillHex)
         }
@@ -418,14 +422,26 @@ enum ThumbnailRenderer {
                           color: HexColor.color(hex: spec.shadowHex)
                               .withAlphaComponent(0.8).cgColor)
         }
-        // Stroke pass first, then fill — a single stroked pass eats the fill.
-        // The shadow belongs to the outermost thing drawn: the stroke when
-        // there is one, otherwise the fill. Clearing it before the fill pass
+        // Strokes first, then fill — a single stroked pass eats the fill. Each
+        // stroke is a fattened copy of the glyphs, so they go widest first and
+        // the narrower ones land on top, leaving a ring of each colour showing.
+        // That is the black-then-white double outline this genre runs on.
+        //
+        // The shadow belongs to the outermost thing drawn — the widest stroke
+        // when there is one, otherwise the fill — so it is cleared after the
+        // FIRST pass, not after the last. Clearing it before the fill pass
         // regardless is why stroke-free text never had a shadow.
-        if spec.strokeWidth > 0.1 {
+        // Round the corners of the outline before drawing any of it. Core Text
+        // strokes through the context, so it honours this — and the default
+        // miter join throws long spikes off the sharp corners of a heavy face,
+        // which nobody notices at a 10px stroke and nobody can miss at 42.
+        cg?.setLineJoin(.round)
+        cg?.setMiterLimit(2)
+        for stroke in spec.allStrokes {
             NSAttributedString(string: text,
                                attributes: textAttributes(spec, canvasHeight: size.height,
-                                                          strokePass: true)).draw(in: rect)
+                                                          strokePass: true,
+                                                          stroke: stroke)).draw(in: rect)
             cg?.setShadow(offset: .zero, blur: 0, color: nil)
         }
 
@@ -980,7 +996,7 @@ extension ThumbnailRenderer {
     /// Whether this layer draws an outline that an overlay must not cover.
     static func isStroked(_ layer: ThumbLayer) -> Bool {
         switch layer.kind {
-        case .text(let spec): return spec.strokeWidth > 0.1
+        case .text(let spec): return spec.widestStroke > 0.1
         case .image(let spec): return spec.strokeWidth > 0.1 || spec.borderWidth > 0.1
         case .shape(let spec): return spec.strokeWidth > 0.1
         }
@@ -992,6 +1008,9 @@ extension ThumbnailRenderer {
         switch layer.kind {
         case .text(var spec):
             spec.strokeWidth = 0
+            // Every outline, not just the first — an overlay masked to a copy
+            // that still had its outer strokes would repaint them anyway.
+            spec.extraStrokes = []
             spec.shadowEnabled = false
             bare.kind = .text(spec)
         case .image(var spec):
