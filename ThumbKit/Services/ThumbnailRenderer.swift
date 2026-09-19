@@ -803,7 +803,25 @@ final class AdjustedImageCache: @unchecked Sendable {
         return originals.object(forKey: key)
     }
 
+    /// Drops the ADJUSTED results and keeps the decoded sources.
+    ///
+    /// This is what an adjustment slider needs, and getting it wrong was the
+    /// single worst thing in this app's performance. Moving Brightness one
+    /// tick changes what the adjusted image looks like; it does not change the
+    /// file on disk. Throwing the decoded sources away anyway meant every tick
+    /// re-read and re-decoded every source from disk — measured on a real
+    /// nine-layer design as 62 ms a frame against 17 ms with the sources kept,
+    /// which is the difference between a slider that tracks and one that
+    /// stutters. The `originals` cache was added to prevent exactly that and
+    /// was then being emptied by the one call that mattered.
     func invalidate() {
+        cache.removeAllObjects()
+    }
+
+    /// Drops everything, sources included. Only for when the BYTES behind a
+    /// layer change — a different file picked, a cutout regenerated — because
+    /// that is the only time a decoded source is actually stale.
+    func invalidateSources() {
         cache.removeAllObjects()
         originals.removeAllObjects()
         // Reads in flight are deliberately left alone: they are already

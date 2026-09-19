@@ -52,6 +52,43 @@ enum ThumbLibrary {
         "png", "jpg", "jpeg", "heic", "gif", "tiff", "tif", "webp", "bmp",
     ]
 
+    /// How long the Assets folder gets to answer before the library goes on
+    /// without it.
+    ///
+    /// That folder lives on the Desktop so it is reachable in Finder — and a
+    /// Desktop managed by iCloud can take an unbounded time to ENUMERATE, not
+    /// just to read. Observed on this Mac: the scan sat in `open()` inside
+    /// `NSDirectoryEnumerator` at 0% CPU and the panel showed its spinner for
+    /// ever, even though everything the app itself owns was sitting local and
+    /// ready. One slow folder must not hide the whole library.
+    static let folderScanDeadline: TimeInterval = 1.5
+
+    /// How the folder is read. Overridable so a check can make the scan take
+    /// as long as it likes — the same trick `AdjustedImageCache.reader` uses,
+    /// and for the same reason: a directory that hangs cannot be staged.
+    /// Production never reassigns it.
+    nonisolated(unsafe) static var folderScanner: () -> [Asset] = { folderAssets() }
+
+    /// Files under the assets folder, one level of subfolder as the tag.
+    /// Returns nil when the folder did not answer in time.
+    static func folderAssets(within deadline: TimeInterval) -> [Asset]? {
+        let done = DispatchSemaphore(value: 0)
+        let box = ScanBox()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = folderScanner()
+            box.assets = found
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + deadline) == .success else { return nil }
+        return box.assets
+    }
+
+    /// Somewhere for the scanning thread to leave its answer. A class because
+    /// the thread may still be running when the wait gives up.
+    private final class ScanBox: @unchecked Sendable {
+        var assets: [Asset] = []
+    }
+
     /// Files under the assets folder, one level of subfolder as the tag.
     static func folderAssets() -> [Asset] {
         let fm = FileManager.default
@@ -171,17 +208,28 @@ enum ThumbLibrary {
 
     /// Everything, deduplicated by path: what you filed, what the app is
     /// holding, and what your designs point at elsewhere.
-    static func all() -> [Asset] {
+    /// Everything, and whether anything had to be left out.
+    struct Scan {
+        var assets: [Asset] = []
+        /// True when the Assets folder did not answer in time, so the list is
+        /// everything the app owns but not what you filed in Finder.
+        var folderUnavailable = false
+    }
+
+    static func scan() -> Scan {
         invalidate()
+        let filed = folderAssets(within: folderScanDeadline)
         var seen = Set<String>()
         var out: [Asset] = []
-        for asset in folderAssets() + storedAssets() + recentAssets()
+        for asset in (filed ?? []) + storedAssets() + recentAssets()
         where !seen.contains(asset.path) {
             seen.insert(asset.path)
             out.append(asset)
         }
-        return out
+        return Scan(assets: out, folderUnavailable: filed == nil)
     }
+
+    static func all() -> [Asset] { scan().assets }
 
     static func tags(in assets: [Asset]) -> [String] {
         Array(Set(assets.compactMap(\.tag))).sorted()

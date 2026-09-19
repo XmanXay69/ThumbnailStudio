@@ -20,11 +20,15 @@ struct LibraryPanel: View {
     let onClose: () -> Void
 
     @ObservedObject private var favourites = ThumbFavourites.shared
+    @ObservedObject private var thumbnails = ThumbThumbnailCache.shared
     @State private var assets: [ThumbLibrary.Asset] = []
     @State private var search = ""
     @State private var filter: Filter = .all
     @State private var loading = true
     @State private var isDropTargeted = false
+    /// The Assets folder did not answer in time — everything the app owns is
+    /// still listed.
+    @State private var folderUnavailable = false
 
     /// Which slice of the library is showing. Sources are kept separable
     /// because "the logo I filed" and "a frame the app grabbed off a video"
@@ -172,8 +176,13 @@ struct LibraryPanel: View {
                 // cutouts, and a transparent PNG on a dark panel looks like a
                 // failed load.
                 LibraryCheckerboard()
-                if let image = NSImage(contentsOfFile: asset.path) {
+                // A cached thumbnail, not the file. Decoding the source per
+                // card per body pass was 35 megapixels of work for 19 cards,
+                // repeated on every keystroke in the search field.
+                if let image = thumbnails.thumbnail(for: asset.path) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                } else if asset.exists {
+                    ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: "exclamationmark.triangle")
                         .font(Studio.Typo.iconMedium)
@@ -242,6 +251,12 @@ struct LibraryPanel: View {
     private var footer: some View {
         StudioStatusBar {
             Text(loading ? "Reading…" : "\(visible.count) of \(assets.count)")
+            if folderUnavailable {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(Studio.Typo.iconSmall)
+                    .foregroundStyle(Studio.Palette.warning)
+                    .help("The Assets folder on your Desktop didn't respond, so anything filed there is missing from this list. Everything the app itself holds is here.")
+            }
             Spacer()
             StudioIconButton("folder", help: "Open the Assets folder", size: .small) {
                 try? FileManager.default.createDirectory(at: Paths.assetsRoot,
@@ -257,9 +272,11 @@ struct LibraryPanel: View {
     private func load() {
         loading = true
         Task {
-            let found = await Task.detached(priority: .userInitiated) {
-                ThumbLibrary.all()
+            let scan = await Task.detached(priority: .userInitiated) {
+                ThumbLibrary.scan()
             }.value
+            let found = scan.assets
+            folderUnavailable = scan.folderUnavailable
             // Starred first, then whatever order the scan produced, which is
             // newest-first within each source.
             let starred = favourites.set.assets

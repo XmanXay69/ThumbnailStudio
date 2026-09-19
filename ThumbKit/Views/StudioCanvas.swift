@@ -38,7 +38,29 @@ extension ThumbnailStudioPane {
                 .fill(Color.black)
                 .frame(width: width, height: height)
                 .shadow(color: Studio.Palette.artboardShadow, radius: 18, y: 8)
-            if let image = canvasImage {
+            // While a drag is running the canvas is drawn in two pieces: the
+            // design WITHOUT the layers being moved, and those layers as their
+            // own images, offset. Both are rendered once when the drag starts,
+            // so following the pointer costs nothing per frame.
+            //
+            // Before this, dragging moved the selection outline and left the
+            // picture behind until you let go — which is the single most
+            // broken-feeling thing an editor can do. Re-rendering the whole
+            // canvas per frame was the other option and it is 17 ms a frame on
+            // a nine-layer design, so it would have traded one stutter for
+            // another.
+            if let preview = dragPreview {
+                Image(nsImage: preview.backdrop)
+                    .resizable()
+                    .interpolation(width >= CGFloat(doc.width) ? .none : .high)
+                    .frame(width: width, height: height)
+                Image(nsImage: preview.moving)
+                    .resizable()
+                    .interpolation(width >= CGFloat(doc.width) ? .none : .high)
+                    .frame(width: width, height: height)
+                    .offset(x: (dragDraft?.dx ?? 0) * width,
+                            y: (dragDraft?.dy ?? 0) * height)
+            } else if let image = canvasImage {
                 Image(nsImage: image)
                     .resizable()
                     // At 100% and above, show real pixels rather than a
@@ -170,18 +192,27 @@ extension ThumbnailStudioPane {
             // cutout had a selection box lying flat across it.
             .rotationEffect(.degrees(spin))
             .position(x: x * width, y: y * height)
-            .onTapGesture(count: 2) {
+            // ONE tap gesture, asking AppKit how many clicks it was.
+            //
+            // Stacking `.onTapGesture(count: 2)` above `.onTapGesture` makes
+            // every single click wait out the double-click window before it
+            // fires, because SwiftUI cannot know yet which one you meant. On a
+            // layer that is a third of a second of dead air between clicking
+            // and being selected, and it reads as the app being slow. The
+            // click count is already on the event; reading it costs nothing
+            // and selection becomes instant.
+            .onTapGesture {
+                let clicks = NSApp.currentEvent?.clickCount ?? 1
+                guard clicks >= 2 else {
+                    select(layer.id, extending: NSEvent.modifierFlags.contains(.command))
+                    return
+                }
                 if case .image(let spec) = layer.kind, spec.path.isEmpty {
                     setImageFile(for: layer.id)
                 } else if case .text = layer.kind {
                     select(layer.id)
                     editor.textEditingRequest = layer.id
-                } else {
-                    select(layer.id)
                 }
-            }
-            .onTapGesture {
-                select(layer.id, extending: NSEvent.modifierFlags.contains(.command))
             }
             .gesture(layer.isLocked ? nil : moveGesture(layer, width: width, height: height))
         }
@@ -222,9 +253,15 @@ extension ThumbnailStudioPane {
                         proportional: proportional)
                     transformDraft = (layer.id, grip, result)
                     lastDragWasProportional = proportional
+                    // Only the layer being resized is redrawn; the rest of the
+                    // design was rendered once when the drag started. A grip
+                    // that moved an outline while the picture stood still is
+                    // the same glitch dragging had.
+                    previewResize(of: layer, grip: grip, result: result,
+                                  proportional: proportional)
                 }
                 .onEnded { _ in
-                    defer { transformDraft = nil }
+                    defer { transformDraft = nil; dragPreview = nil }
                     guard let draft = transformDraft else { return }
                     commit(draft.result, handle: draft.handle,
                            proportional: lastDragWasProportional, to: layer)
@@ -268,8 +305,10 @@ extension ThumbnailStudioPane {
                 break
             }
         }
+        // A resize changes neither the file nor its shape, so only the
+        // adjusted result is stale — and the aspect cache must be left alone
+        // or every grip drag re-reads every image header.
         AdjustedImageCache.shared.invalidate()
-        ImageAspectCache.shared.invalidate()
     }
 
     /// The grip above the box that spins the layer.
@@ -322,6 +361,7 @@ extension ThumbnailStudioPane {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { value in
                 if !selection.contains(layer.id) { select(layer.id) }
+                if dragPreview == nil { beginDragPreview(for: selection) }
                 let result = CanvasDrag.translation(
                     layer: layer,
                     translation: value.translation,
@@ -333,13 +373,77 @@ extension ThumbnailStudioPane {
                 dragDraft = (ids: selection, dx: result.dx, dy: result.dy)
             }
             .onEnded { _ in
-                defer { dragDraft = nil; guideX = nil; guideY = nil }
+                defer { dragDraft = nil; guideX = nil; guideY = nil; dragPreview = nil }
                 guard let draft = dragDraft else { return }
                 var document = doc
                 document.nudge(ids: draft.ids, dx: draft.dx, dy: draft.dy)
                 apply(document, "Move Layer")
                 store.endUndoRun()
             }
+    }
+
+    /// Redraws just the layer being resized, over the backdrop taken when the
+    /// drag began.
+    ///
+    /// One layer is a fraction of a full canvas render, which is what makes
+    /// this affordable per frame where re-rendering the design would not be.
+    private func previewResize(of layer: ThumbLayer, grip: TransformHandle,
+                               result: CanvasTransform.Result, proportional: Bool) {
+        if dragPreview == nil { beginDragPreview(for: [layer.id]) }
+        guard let existing = dragPreview else { return }
+        var drafted = layer
+        drafted.x = result.x
+        drafted.y = result.y
+        drafted.widthFraction = result.widthFraction
+        drafted.heightFraction = result.heightFraction
+        applyPreviewScale(result, handle: grip, proportional: proportional, to: &drafted)
+        var moving = doc
+        moving.transparentBackground = true
+        moving.backgroundHex = nil
+        moving.layers = [drafted]
+        guard let lifted = ThumbnailRenderer.renderForStudio(moving) else { return }
+        dragPreview = (backdrop: existing.backdrop, moving: lifted)
+    }
+
+    /// The same rules `commit` applies, so what you see while dragging is what
+    /// you get when you let go.
+    private func applyPreviewScale(_ result: CanvasTransform.Result,
+                                   handle: TransformHandle, proportional: Bool,
+                                   to target: inout ThumbLayer) {
+        switch target.kind {
+        case .text(var spec):
+            if handle.isCorner {
+                spec.sizeFraction = max(0.01, min(1, spec.sizeFraction * result.sizeScale))
+                target.kind = .text(spec)
+            }
+        case .image(var spec):
+            if handle.heightSign != 0, handle.widthSign == 0 || !proportional {
+                spec.stretched = true
+                target.kind = .image(spec)
+            }
+        case .shape:
+            break
+        }
+    }
+
+    /// Splits the design into "everything staying put" and "everything being
+    /// dragged", each rendered once.
+    ///
+    /// Both go through the same renderer the export uses, so the preview is
+    /// the design — not an approximation of it that snaps into place when you
+    /// let go.
+    private func beginDragPreview(for ids: Set<UUID>) {
+        let document = doc
+        guard !ids.isEmpty else { return }
+        var staying = document
+        staying.layers = document.layers.filter { !ids.contains($0.id) }
+        var moving = document
+        moving.transparentBackground = true
+        moving.backgroundHex = nil
+        moving.layers = document.layers.filter { ids.contains($0.id) }
+        guard let backdrop = ThumbnailRenderer.renderForStudio(staying),
+              let lifted = ThumbnailRenderer.renderForStudio(moving) else { return }
+        dragPreview = (backdrop: backdrop, moving: lifted)
     }
 
     /// A layer's drawn height, straight from the renderer — the selection box

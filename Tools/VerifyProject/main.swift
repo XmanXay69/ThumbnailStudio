@@ -3422,6 +3422,156 @@ do {
     try? FileManager.default.removeItem(atPath: sourcePath)
 }
 
+section("A folder that will not answer")
+do {
+    // The Assets folder lives on the Desktop so you can reach it in Finder,
+    // and a Desktop managed by iCloud can take an unbounded time to ENUMERATE.
+    // Observed here: the scan sat in open() inside NSDirectoryEnumerator at 0%
+    // CPU and the library showed its spinner for ever, while everything the
+    // app owned was local and ready the whole time.
+    let release = DispatchSemaphore(value: 0)
+    ThumbLibrary.folderScanner = {
+        _ = release.wait(timeout: .now() + 30)
+        return []
+    }
+    let started = ProcessInfo.processInfo.systemUptime
+    let scan = ThumbLibrary.scan()
+    let elapsed = ProcessInfo.processInfo.systemUptime - started
+
+    check("a library scan gives up on a folder that will not answer",
+          elapsed < ThumbLibrary.folderScanDeadline + 1.5,
+          String(format: "returned in %.2fs against a %.1fs deadline",
+                 elapsed, ThumbLibrary.folderScanDeadline))
+    check("it waited for the folder before giving up",
+          elapsed >= ThumbLibrary.folderScanDeadline - 0.2,
+          "a scan that never waits would drop a merely slow disk")
+    check("and says so rather than pretending the folder was empty",
+          scan.folderUnavailable,
+          "the panel shows a warning instead of a short list that looks complete")
+    check("everything the app itself holds is still listed",
+          !scan.assets.isEmpty,
+          "\(scan.assets.count) from the store and from saved designs")
+    check("none of what survived came from the folder",
+          scan.assets.allSatisfy { $0.source != .folder })
+
+    release.signal()
+    ThumbLibrary.folderScanner = { ThumbLibrary.folderAssets() }
+    let recovered = ThumbLibrary.scan()
+    check("a folder that answers is not reported as missing",
+          !recovered.folderUnavailable)
+}
+
+section("What a frame costs")
+do {
+    // The decoded source and the adjusted result are two different things, and
+    // only one of them goes stale when a slider moves. Checked by IDENTITY
+    // rather than by a stopwatch: the same decode coming back is exactly what
+    // "the source survived" means, and it cannot flake on a busy machine.
+    let path = NSTemporaryDirectory() + "/verify-cache-source.png"
+    if let png = NSImage(size: NSSize(width: 40, height: 30), flipped: false, drawingHandler: { rect in
+        NSColor.systemIndigo.setFill(); rect.fill(); return true
+    }).tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?
+        .representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: path))
+    }
+    var spec = ImageSpec(path: path)
+    MainActor.assumeIsolated { AdjustedImageCache.shared.invalidateSources() }
+    let first = MainActor.assumeIsolated { AdjustedImageCache.shared.image(for: spec) }
+    check("an image decodes", first != nil)
+
+    MainActor.assumeIsolated { AdjustedImageCache.shared.invalidate() }
+    let afterAdjust = MainActor.assumeIsolated { AdjustedImageCache.shared.image(for: spec) }
+    check("moving a slider keeps the decoded source",
+          first != nil && afterAdjust != nil && first === afterAdjust,
+          "re-decoding every source per tick measured 62 ms a frame against 17")
+
+    MainActor.assumeIsolated { AdjustedImageCache.shared.invalidateSources() }
+    let afterNewFile = MainActor.assumeIsolated { AdjustedImageCache.shared.image(for: spec) }
+    check("a new file behind the layer does not",
+          afterNewFile != nil && afterNewFile !== first,
+          "a stale decode of a replaced file would be worse than slow")
+
+    // An adjustment must still change what you see, or "keep the source" would
+    // have been achieved by ignoring the slider.
+    spec.brightness = 0.6
+    let brightened = MainActor.assumeIsolated { AdjustedImageCache.shared.image(for: spec) }
+    /// Mean of the three channels over the whole image. `brightnessComponent`
+    /// was the first thing tried and it is an HSB property — on a deviceRGB
+    /// colour it answers about the dominant channel, not about how light the
+    /// picture got.
+    func meanChannel(_ image: NSImage?) -> Double {
+        guard let image, let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return -1 }
+        var total = 0.0, n = 0.0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                guard let c = rep.colorAt(x: x, y: y) else { continue }
+                total += (c.redComponent + c.greenComponent + c.blueComponent) / 3
+                n += 1
+            }
+        }
+        return n > 0 ? total / n : -1
+    }
+    check("and the adjustment still reaches the canvas",
+          meanChannel(brightened) > meanChannel(afterNewFile) + 0.05,
+          String(format: "%.3f -> %.3f", meanChannel(afterNewFile), meanChannel(brightened)))
+    try? FileManager.default.removeItem(atPath: path)
+
+    // Dragging splits the canvas in two and offsets one half. The two halves
+    // have to add back up to the design, or the moment you let go the picture
+    // would jump.
+    var doc = ThumbDocument()
+    doc.width = 300; doc.height = 200
+    doc.backgroundHex = "202020"
+    var headline = TextSpec(text: "HI")
+    headline.sizeFraction = 0.3
+    headline.shadowEnabled = false
+    var panel = ShapeSpec(shape: "rectangle")
+    panel.fillHex = "CC3344"
+    doc.layers = [
+        ThumbLayer(kind: .shape(panel), x: 0.3, y: 0.5, widthFraction: 0.3, heightFraction: 0.3),
+        ThumbLayer(kind: .text(headline), x: 0.7, y: 0.5, widthFraction: 0.5),
+    ]
+    let moved = Set([doc.layers[1].id])
+    var staying = doc
+    staying.layers = doc.layers.filter { !moved.contains($0.id) }
+    var lifted = doc
+    lifted.transparentBackground = true
+    lifted.backgroundHex = nil
+    lifted.layers = doc.layers.filter { moved.contains($0.id) }
+
+    func rep(_ d: ThumbDocument) -> NSBitmapImageRep? {
+        ThumbnailRenderer.render(d, showingPlaceholders: false, provider: { _ in nil })?
+            .tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }
+    }
+    let whole = rep(doc), back = rep(staying), front = rep(lifted)
+    check("the drag preview renders both halves", back != nil && front != nil)
+    check("the half being dragged carries real alpha",
+          front?.hasAlpha == true && {
+              // A corner the text does not reach must be see-through, or the
+              // moving half would paint a grey slab over the design.
+              guard let front, let corner = front.colorAt(x: 3, y: 3) else { return false }
+              return corner.alphaComponent < 0.05
+          }(), "otherwise dragging one layer hides everything under it")
+    check("the two halves add back up to the design",
+          {
+              guard let whole, let back, let front else { return false }
+              var worst = 0.0
+              for y in stride(from: 0, to: whole.pixelsHigh, by: 3) {
+                  for x in stride(from: 0, to: whole.pixelsWide, by: 3) {
+                      guard let target = whole.colorAt(x: x, y: y),
+                            let under = back.colorAt(x: x, y: y),
+                            let over = front.colorAt(x: x, y: y) else { continue }
+                      let alpha = over.alphaComponent
+                      // Source-over, which is what stacking the two images does.
+                      let red = over.redComponent * alpha + under.redComponent * (1 - alpha)
+                      worst = max(worst, abs(red - target.redComponent))
+                  }
+              }
+              return worst < 0.06
+          }(), "at zero offset the split must be invisible, or letting go makes the picture jump")
+}
+
 section("Free transform")
 do {
     let canvas = CGSize(width: 1000, height: 500)

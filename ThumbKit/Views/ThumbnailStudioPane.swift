@@ -47,6 +47,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
     /// Whether the drag in progress was holding the aspect. Read at the end of
     /// the gesture, when the modifier keys are no longer worth trusting.
     @State var lastDragWasProportional = true
+    /// The design split in two for the duration of a drag: what is staying
+    /// still, and what is following the pointer.
+    @State var dragPreview: (backdrop: NSImage, moving: NSImage)?
     @State var isDropTargeted = false
     /// Which render is current. A canvas render now happens off the main
     /// thread, so a slow one of an OLD document can finish after a fast one of
@@ -146,6 +149,11 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             let pruned = editor.selection.intersection(live)
             if pruned != editor.selection { editor.selection = pruned }
             ThumbKeyRouter.shared.refresh()
+            // The split is only ever a picture of a gesture in progress. Once
+            // the document itself moves, it is stale by definition — and a
+            // gesture that ends without its handler running would otherwise
+            // leave it on screen over the real canvas.
+            dragPreview = nil
             rerender()
         }
         .sheet(isPresented: Binding(
@@ -349,8 +357,9 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
             change(&spec)
             layer.kind = .image(spec)
         }
+        // Adjustments only: the file has not changed, so the decoded source
+        // must not be thrown away with the adjusted result.
         AdjustedImageCache.shared.invalidate()
-        ImageAspectCache.shared.invalidate()
     }
 
     func mutateShape(_ id: UUID, _ action: String, _ change: (inout ShapeSpec) -> Void) {
@@ -448,7 +457,8 @@ struct ThumbnailStudioPane<Store: ThumbStore>: View {
                 layer.kind = .image(spec)
             }
         }
-        AdjustedImageCache.shared.invalidate()
+        // A different file: the decoded source and its aspect are both stale.
+        AdjustedImageCache.shared.invalidateSources()
         ImageAspectCache.shared.invalidate()
     }
 

@@ -71,6 +71,7 @@ swiftc -O -o "$BIN" \
   ThumbKit/Core/EditingPrimitives.swift \
   ThumbKit/Services/ThumbnailRenderer.swift \
   ThumbKit/Services/ImageAspectCache.swift \
+  ThumbKit/Services/ThumbThumbnailCache.swift \
   ThumbKit/Services/ThumbAssets.swift \
   ThumbKit/Services/ThumbFrameSource.swift \
   ThumbKit/Services/ThumbStore.swift \

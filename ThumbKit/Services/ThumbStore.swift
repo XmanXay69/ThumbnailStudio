@@ -231,7 +231,8 @@ final class StandaloneThumbStore: ObservableObject, ThumbStore {
                     else { return }
                     CutoutRun.applyResult(cutout, to: &current)
                     document.layers[index].kind = .image(current)
-                    AdjustedImageCache.shared.invalidate()
+                    // A cutout landing is new bytes behind the layer.
+                    AdjustedImageCache.shared.invalidateSources()
                     self.applyThumbDoc(document, action: "Remove Background")
                 case .failure(let error):
                     self.thumbStudioError = error.localizedDescription
