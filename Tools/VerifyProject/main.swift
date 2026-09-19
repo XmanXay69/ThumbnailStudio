@@ -3567,6 +3567,36 @@ do {
               return !spec.stretched
           }(), "nobody wants a photo silently squashed by a stored height")
 
+    // The grip lives inside a box that is already turned, so what it measures
+    // is relative to the layer, not to the screen.
+    let spun = 32.0
+    check("grabbing the grip on a rotated layer does not snap it straight",
+          abs(CanvasTransform.rotation(from: spun, centre: centre,
+                                       pointer: CGPoint(x: 100, y: 40),
+                                       snapping: false) - spun) < 0.001,
+          "at rest the grip reads zero in its own frame, and 0 is not the answer")
+    check("dragging it adds to where the layer already was",
+          abs(CanvasTransform.rotation(from: spun, centre: centre,
+                                       pointer: CGPoint(x: 160, y: 100),
+                                       snapping: false) - (spun + 90)) < 0.001)
+    check("past a full turn it wraps instead of counting up",
+          {
+              let result = CanvasTransform.rotation(from: 300, centre: centre,
+                                                    pointer: CGPoint(x: 160, y: 100),
+                                                    snapping: false)
+              return abs(result - 30) < 0.001
+          }())
+    check("snapping rounds the ANSWER, not the drag",
+          CanvasTransform.rotation(from: spun, centre: centre,
+                                   pointer: CGPoint(x: 160, y: 100),
+                                   snapping: true) == 120,
+          "32 plus a snapped 90 would be 122, which is not a round angle")
+    check("a layer at zero behaves exactly as it did before",
+          CanvasTransform.rotation(from: 0, centre: centre,
+                                   pointer: CGPoint(x: 160, y: 100), snapping: false)
+              == CanvasTransform.rotation(centre: centre,
+                                          pointer: CGPoint(x: 160, y: 100), snapping: false))
+
     // Where the grips actually sit, which the view positions them from.
     check("grips sit on the corners and edge midpoints",
           TransformHandle.topLeft.unitPosition == CGPoint(x: 0, y: 0)

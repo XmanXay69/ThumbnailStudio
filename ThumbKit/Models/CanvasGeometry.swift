@@ -171,6 +171,25 @@ enum CanvasTransform {
         return result
     }
 
+    /// The angle a drag on the rotation grip should leave the layer at.
+    ///
+    /// The grip lives INSIDE the box, which is already turned by `current` —
+    /// so the angle it measures is relative to where the layer is, not to the
+    /// screen. Reading it as absolute snapped a layer sitting at 32° straight
+    /// back to 0 the moment you touched the grip, because at rest the grip
+    /// measures zero in its own frame.
+    static func rotation(from current: Double, centre: CGPoint, pointer: CGPoint,
+                         snapping: Bool) -> Double {
+        let relative = rotation(centre: centre, pointer: pointer, snapping: false)
+        var absolute = current + relative
+        // Snap the answer, not the part of it the grip contributed: snapping a
+        // 32° layer's 13° drag to 15 lands on 47, which is not a round number
+        // and not what the guide lines promise.
+        if snapping { absolute = (absolute / 15).rounded() * 15 }
+        absolute = absolute.truncatingRemainder(dividingBy: 360)
+        return absolute < 0 ? absolute + 360 : absolute
+    }
+
     /// Degrees from the layer's centre to the pointer, measured so that
     /// dragging the grip clockwise increases the angle — matching
     /// `rotationDegrees`, which the renderer applies clockwise on screen.

@@ -294,6 +294,7 @@ extension ThumbnailStudioPane {
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { value in
                         let degrees = CanvasTransform.rotation(
+                            from: layer.rotationDegrees,
                             centre: centre, pointer: value.location,
                             snapping: NSEvent.modifierFlags.contains(.shift))
                         rotationDraft = (layer.id, degrees)
@@ -313,7 +314,12 @@ extension ThumbnailStudioPane {
     /// Dragging moves the whole selection, and snaps to the canvas centre and
     /// to every other layer's centre.
     private func moveGesture(_ layer: ThumbLayer, width: CGFloat, height: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 2)
+        // Global, not local. This gesture hangs off a box that is rotated with
+        // its layer, and a local translation would be measured along the
+        // layer's own axes — so dragging a 32° cutout sideways would send it
+        // diagonally. Moving is a screen-space verb; only the resize grips
+        // want the layer's own frame.
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { value in
                 if !selection.contains(layer.id) { select(layer.id) }
                 let result = CanvasDrag.translation(
