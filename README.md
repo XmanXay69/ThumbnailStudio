@@ -1,3 +1,37 @@
+# Thumbnail Studio
+
+A local macOS app for building YouTube thumbnails. No accounts, no cloud, no
+subscription — it runs on this Mac and nothing leaves it.
+
+Layers, groups, a real text engine with multiple outlines, glow and the other
+layer effects, on-device background removal, free transform, a browsable asset
+library, and a measurement layer no other tool has: it tells you how tall your
+smallest text is in the up-next rail, what YouTube's duration badge is
+covering, and offers ranked arrangements of your own text. None of that is a
+prediction — the app has no click-through data and says so.
+
+```bash
+Tools/install-thumbstudio.sh     # builds and installs ThumbStudio.app
+Tools/verify.sh                  # the check harness
+```
+
+Jump to [Thumbnail Studio](#thumbnail-studio) for what it does, or
+[Thumbnail Studio as its own app](#thumbnail-studio-as-its-own-app) for how the
+two apps share code.
+
+## This repo also holds the VOD editor
+
+Thumbnail Studio grew out of it and still shares its Xcode project: one
+`VODEditor.xcodeproj` with two targets over a common `ThumbKit/`, and a check
+harness that compiles sources from both trees. They are kept together because
+splitting them would mean a new project file and rebuilding the harness, not
+because the VOD side is still being worked on — it is not.
+
+Everything below this line is the VOD editor's documentation, with the studio's
+sections folded in where they were written.
+
+---
+
 # VOD Editor
 
 Local-only macOS tool for turning multi-hour Twitch VODs into a YouTube best-of
