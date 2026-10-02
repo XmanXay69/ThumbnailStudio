@@ -12,7 +12,32 @@ prediction — the app has no click-through data and says so.
 
 ```bash
 Tools/install-thumbstudio.sh     # builds and installs ThumbStudio.app
+Tools/make-dmg.sh                # packs it into a drag-to-install disk image
 Tools/verify.sh                  # the check harness
+```
+
+## Installing from the disk image
+
+Open the `.dmg`, drag Thumbnail Studio to Applications, eject.
+
+**The first launch needs a right-click.** Double-clicking it will say the app
+"cannot be opened because the developer cannot be verified" — instead
+**right-click the app → Open**, then confirm. macOS remembers the decision and
+every launch after that is normal.
+
+That is not a bug and it is not fixable from this side without paying for it.
+macOS quarantines anything downloaded from the internet and refuses to run it
+unless the app is signed with a **Developer ID** certificate and notarized by
+Apple, which requires a paid Apple Developer membership. This app is signed
+ad-hoc — fine for the Mac that built it, and not something Gatekeeper will
+accept from a download. (An "Apple Development" certificate, which this Mac
+has, is for running on your own registered devices and does not count.)
+
+If you would rather not click through the dialog, strip the quarantine flag
+instead:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ThumbStudio.app
 ```
 
 Jump to [Thumbnail Studio](#thumbnail-studio) for what it does, or
