@@ -3,6 +3,17 @@
 A local macOS app for building YouTube thumbnails. No accounts, no cloud, no
 subscription — it runs on this Mac and nothing leaves it.
 
+### [⬇ Download Thumbnail Studio](https://github.com/XmanXay69/ThumbnailStudio/releases/latest/download/ThumbnailStudio.dmg)
+
+A 2.3 MB disk image — open it, drag the app to Applications, eject. The link
+always serves the newest release, so it keeps working after every rebuild.
+[All releases](https://github.com/XmanXay69/ThumbnailStudio/releases).
+
+While this repo is private the link only works for you, signed in to GitHub;
+anyone else gets a 404. And the **first launch needs a right-click → Open**,
+for the reason set out under [Installing from the disk
+image](#installing-from-the-disk-image).
+
 Layers, groups, a real text engine with multiple outlines, glow and the other
 layer effects, on-device background removal, free transform, a browsable asset
 library, and a measurement layer no other tool has: it tells you how tall your
